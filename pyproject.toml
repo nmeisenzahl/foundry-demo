@@ -1,0 +1,52 @@
+[project]
+name = "foundry-demo"
+version = "0.1.0"
+description = "Local delivery for a versioned Microsoft Foundry prompt agent."
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "azure-ai-projects==2.6.0",
+  "azure-identity==1.25.3",
+  "openai==3.10.0",
+]
+
+[project.scripts]
+deploy-agent = "foundry_demo.delivery.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.16.6",
+]
+
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = false
+packages = [
+  "foundry_demo",
+  "foundry_demo.agents",
+  "foundry_demo.agents.common",
+  "foundry_demo.agents.research_assistant",
+  "foundry_demo.agents.architecture_advisor",
+  "foundry_demo.delivery",
+]
+package-dir = { foundry_demo = "src" }
+
+[tool.setuptools.package-data]
+foundry_demo = ["agents/architecture_advisor/skills/**/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["foundry_demo"]

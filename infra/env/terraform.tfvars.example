@@ -1,0 +1,8 @@
+# Example values. Validate model availability and quota before deployment.
+# subscription_id = "00000000-0000-0000-0000-000000000000"
+# location        = "swedencentral"
+# project_name    = "foundrydemo"
+# model_name      = "gpt-5.6-terra"
+# model_version   = "2026-07-09"
+# model_sku_name  = "GlobalStandard"
+# model_capacity  = 10

@@ -1,0 +1,39 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Local configuration
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Generated application data
+artifacts/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
