@@ -78,7 +78,6 @@ uv run pytest -q
 - [Setup and infrastructure](docs/Setup.md)
 - [Agent development and deployment](docs/Agents.md)
 - [Operations and release safety](docs/Operations.md)
-- [Roadmap](docs/Roadmap.md)
 
 ## Current Scope
 
