@@ -103,3 +103,17 @@ def validate_source_domains(
     if count < min_count:
         return f"No sources from {domain} found in response output."
     return None
+
+
+def validate_no_tool_calls(evidence: "SmokeEvidence") -> str | None:
+    """Check that the smoke response completed without calling any tool.
+
+    A connected model cannot serve Web Search, Bing grounding, SharePoint,
+    Memory Search, Browser Automation, or Fabric, so an agent on one is
+    expected to answer from the model alone. This is a guard against a tool
+    being attached later, not evidence about the current response.
+    """
+    if evidence.completed_tool_name_counts:
+        names = ", ".join(sorted(evidence.completed_tool_name_counts))
+        return f"Expected no tool calls, found completed calls to: {names}."
+    return None

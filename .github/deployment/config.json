@@ -51,6 +51,17 @@
       "source_paths": [
         "src/agents/research_assistant/"
       ]
+    },
+    {
+      "name": "release-notes-writer",
+      "kind": "prompt",
+      "image_context": "",
+      "image_repository": "",
+      "image_reference_env": "",
+      "image_digest_env": "",
+      "source_paths": [
+        "src/agents/release_notes_writer/"
+      ]
     }
   ]
 }

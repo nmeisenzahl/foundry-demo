@@ -36,6 +36,11 @@ class PromptAgentSpec(BaseAgentSpec):
 
     instructions: str = ""
     tools_factory: Callable[[], list[Any]] = list
+    # Admin-connected ("bring your own model") references live on the prompt
+    # spec, not the base spec: Foundry does not support connected models for
+    # hosted agents, and putting the field on the base class would advertise a
+    # capability that cannot work.
+    connected_model_env_var: str | None = None
     kind: AgentKind = AgentKind.PROMPT
 
 

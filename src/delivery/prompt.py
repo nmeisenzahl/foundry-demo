@@ -19,17 +19,17 @@ class CandidateVersionError(RuntimeError):
 def build_definition(
     spec: PromptAgentSpec,
     *,
-    default_model: str,
+    model: str,
     temperature: float | None = None,
 ) -> PromptAgentDefinition:
-    model = (spec.model_deployment_name or default_model).strip()
-    if not model:
+    resolved = model.strip()
+    if not resolved:
         raise AgentSpecError("Model deployment name is required and cannot be blank.")
     instructions = spec.instructions.strip()
     if not instructions:
         raise AgentSpecError(f"Agent {spec.name!r} instructions cannot be empty.")
     kwargs: dict[str, object] = {
-        "model": model,
+        "model": resolved,
         "instructions": instructions,
         "tools": spec.tools_factory(),
     }
@@ -49,7 +49,9 @@ class PromptAgentOperations:
         if not isinstance(spec, PromptAgentSpec):
             raise TypeError("PromptAgentOperations requires PromptAgentSpec")
         definition = build_definition(
-            spec, default_model=config.model_deployment_name, temperature=config.temperature
+            spec,
+            model=config.resolve_model_deployment_name(spec),
+            temperature=config.temperature,
         )
         serialized = definition.as_dict()
         digest = hashlib.sha256(

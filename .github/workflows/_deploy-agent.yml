@@ -160,6 +160,8 @@ jobs:
           FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
           FOUNDRY_MODEL_DEPLOYMENT_NAME: >-
             ${{ vars.FOUNDRY_MODEL_DEPLOYMENT_NAME }}
+          FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME: >-
+            ${{ vars.FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME }}
           FOUNDRY_DEPLOYMENT_RECORD_DIR: artifacts/deployments
         run: |
           uv run deploy-agent "$AGENT_NAME" \

@@ -291,9 +291,10 @@ def test_deploy_first_deployment_order(
 
     assert recorder.record_path.is_file()
     record = json.loads(recorder.record_path.read_text(encoding="utf-8"))
-    assert record["schema_version"] == "4"
+    assert record["schema_version"] == "5"
     assert record["project_endpoint"] == config.project_endpoint
     assert record["agent_kind"] == "prompt"
+    assert record["model_deployment_name"] == "example-model"
     assert record["artifact_type"] == "prompt_definition"
     assert record["status"] == "succeeded"
     assert record["phase"] == "cutover_complete"
@@ -858,3 +859,88 @@ def test_main_record_path_file_uses_absolute_path_outside_repository(
     records = list(records_dir.glob("*.json"))
     assert len(records) == 1
     assert written == records[0]
+
+
+@patch("foundry_demo.delivery.cli.AIProjectClient")
+@patch("foundry_demo.delivery.cli.DefaultAzureCredential")
+def test_deployment_record_carries_the_connected_model(
+    mock_cred_cls: MagicMock,
+    mock_client_cls: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """A connected-model deployment is distinguishable from an ordinary one.
+
+    Without this field the record for an agent whose inference left Azure
+    through a gateway looks identical to one that used the Terraform-deployed
+    model.
+    """
+    from dataclasses import replace
+
+    mock_client = MagicMock()
+    mock_client_cls.return_value.__enter__.return_value = mock_client
+    agents = mock_client.agents
+    agents.get.side_effect = ResourceNotFoundError("Agent does not exist")
+    agents.create_version.return_value = DummyVersionItem("1")
+
+    openai_client = MagicMock()
+    openai_client.responses.create.return_value = _DummySmokeResponse()
+    mock_client.get_openai_client.return_value = openai_client
+
+    connected_spec = replace(
+        RESEARCH_ASSISTANT_SPEC,
+        connected_model_env_var="FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME",
+    )
+    config = DeploymentConfig(
+        project_endpoint="https://example.services.ai.azure.com/api/projects/example-dev",
+        model_deployment_name="example-model",
+        temperature=None,
+        environ={"FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME": "tc-connection/gpt-4o"},
+    )
+
+    with DeploymentRecorder(
+        agent_name=connected_spec.name,
+        record_dir=tmp_path / "records",
+    ) as recorder:
+        deploy(connected_spec, config, recorder)
+
+    record = json.loads(recorder.record_path.read_text(encoding="utf-8"))
+    assert record["schema_version"] == "5"
+    assert record["model_deployment_name"] == "tc-connection/gpt-4o"
+    definition = agents.create_version.call_args.kwargs["definition"]
+    assert definition.model == "tc-connection/gpt-4o"
+
+
+@patch("foundry_demo.delivery.cli.AIProjectClient")
+@patch("foundry_demo.delivery.cli.DefaultAzureCredential")
+def test_a_malformed_connected_model_fails_before_any_foundry_call(
+    mock_cred_cls: MagicMock,
+    mock_client_cls: MagicMock,
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+
+    mock_client = MagicMock()
+    mock_client_cls.return_value.__enter__.return_value = mock_client
+
+    connected_spec = replace(
+        RESEARCH_ASSISTANT_SPEC,
+        connected_model_env_var="FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME",
+    )
+    config = DeploymentConfig(
+        project_endpoint="https://example.services.ai.azure.com/api/projects/example-dev",
+        model_deployment_name="example-model",
+        temperature=None,
+        environ={"FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME": "no-connection-prefix"},
+    )
+
+    with (
+        pytest.raises(ConfigurationError, match="FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME"),
+        DeploymentRecorder(
+            agent_name=connected_spec.name,
+            record_dir=tmp_path / "records",
+        ) as recorder,
+    ):
+        deploy(connected_spec, config, recorder)
+
+    mock_client.agents.get.assert_not_called()
+    mock_client.agents.create_version.assert_not_called()

@@ -5,11 +5,18 @@ agents. Terraform owns the Azure control plane, while a Python SDK delivery
 package owns typed agent definitions, immutable versions, smoke validation,
 release records, and endpoint promotion.
 
-The repository currently includes:
+## Demos
 
-- `research-assistant`: a prompt agent with Web Search and citation validation.
-- `architecture-advisor`: a containerized Microsoft Agent Framework hosted agent with Foundry Toolbox (Microsoft Learn MCP and architecture decision brief skill).
-- `incident-triage`: a containerized [Flock](https://github.com/whiteducksoftware/flock) hosted agent whose blackboard runs a three-agent triage crew with no external tools.
+| Demo | Kind | What it shows | Source | Guide |
+| --- | --- | --- | --- | --- |
+| `research-assistant` | Prompt | Web Search with citation validation | [`src/agents/research_assistant/`](src/agents/research_assistant/) | [Add a Prompt Agent](docs/Agents.md#add-a-prompt-agent) |
+| `architecture-advisor` | Hosted | Microsoft Agent Framework container with Foundry Toolbox (Microsoft Learn MCP and an architecture decision brief skill) | [`src/agents/architecture_advisor/`](src/agents/architecture_advisor/) | [Deploy the Hosted Agent](docs/Agents.md#deploy-the-hosted-agent) |
+| `incident-triage` | Hosted | [Flock](https://github.com/whiteducksoftware/flock) blackboard running a three-agent triage crew with no external tools | [`src/agents/incident_triage/`](src/agents/incident_triage/) | [Deploy the Flock Hosted Agent](docs/Agents.md#deploy-the-flock-hosted-agent) |
+| `release-notes-writer` | Prompt | An admin-connected model served through [Token Control](https://tokencontrol.ai/), white duck's FinOps and governance gateway | [`src/agents/release_notes_writer/`](src/agents/release_notes_writer/) | [Deploy the Connected-Model Prompt Agent](docs/Agents.md#deploy-the-connected-model-prompt-agent) |
+
+`release-notes-writer` needs a Token Control tenant and API key; see
+[Setup](docs/Setup.md#token-control-model-gateway). The other three demos need
+only the Terraform-deployed model.
 
 ## Architecture
 
@@ -82,6 +89,16 @@ set -a
 . "$IMAGE_ENV_FILE"
 set +a
 uv run deploy-agent incident-triage
+```
+
+The connected-model example runs on Token Control instead of the
+Terraform-deployed model, so it needs one more export:
+
+```bash
+export FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME="$(
+  terraform -chdir=infra output -raw connected_model_deployment_name
+)"
+uv run deploy-agent release-notes-writer
 ```
 
 Run the local quality checks:

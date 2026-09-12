@@ -119,6 +119,7 @@ class DeploymentRecorder:
         self._definition_sha256: str | None = None
         self._project_endpoint: str | None = None
         self._agent_kind: str | None = None
+        self._model_deployment_name: str | None = None
         self._artifact_type: str | None = None
         self._artifact_reference: str | None = None
         self._artifact_sha256: str | None = None
@@ -157,6 +158,16 @@ class DeploymentRecorder:
 
     def set_project_endpoint(self, value: str) -> None:
         self._project_endpoint = value
+
+    def set_model_deployment_name(self, value: str) -> None:
+        """Record the model this deployment actually ran on.
+
+        For an agent on an admin-connected model this is
+        ``<connection>/<model>``, which is the only place the record shows that
+        inference left Azure through a gateway. It is a resource name, not a
+        secret: no endpoint and no credential.
+        """
+        self._model_deployment_name = value
 
     def set_artifact(
         self,
@@ -221,11 +232,12 @@ class DeploymentRecorder:
             smoke_dict = asdict(self._smoke_evidence)
 
         data: dict[str, Any] = {
-            "schema_version": "4",
+            "schema_version": "5",
             "deployment_id": self.deployment_id,
             "agent_name": self.agent_name,
             "project_endpoint": self._project_endpoint,
             "agent_kind": self._agent_kind,
+            "model_deployment_name": self._model_deployment_name,
             "candidate_version": self._candidate_version,
             "previous_active_version": self._previous_active_version,
             "artifact_type": self._artifact_type,

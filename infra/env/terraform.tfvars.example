@@ -24,3 +24,23 @@
 # hosted_agent_object_ids = {
 #   "architecture-advisor" = "00000000-0000-0000-0000-000000000000"
 # }
+#
+# Token Control model gateway for the admin-connected Foundry model used by
+# release-notes-writer. Omit the block to leave the connection uncreated; the
+# release-notes-writer deployment then fails with a configuration error.
+#
+# Defaults suit a gateway serving the OpenAI v1 shape
+# ({base_url}/chat/completions, model in the body). For an Azure-OpenAI-shaped
+# gateway ({base_url}/deployments/{name}/chat/completions) set
+# deployment_in_path = true and supply an inference_api_version.
+# token_control = {
+#   base_url        = "https://<host>/api/v1/openai"
+#   deployment_name = "gpt-5.2"
+#   model_name      = "gpt-5.2"
+#   model_version   = "2025-12-11"
+#   # deployment_in_path    = false
+#   # inference_api_version = ""
+# }
+#
+# The API key is a secret and never belongs in a tfvars file:
+#   export TF_VAR_token_control_api_key="..."
