@@ -11,6 +11,19 @@ resource "azurerm_role_assignment" "operator_foundry_user" {
   principal_id       = each.value
 }
 
+# Hosted agents that call model inference directly (rather than through the
+# Agents API) authenticate against the account endpoint, and a project-scope
+# assignment does not inherit upward to the account. Operators need the same
+# grant to run those agents locally: subscription Owner is a control-plane role
+# and conveys no Cognitive Services data actions.
+resource "azurerm_role_assignment" "operator_foundry_account_user" {
+  for_each = toset(var.operator_object_ids)
+
+  scope              = azurerm_cognitive_account.main.id
+  role_definition_id = local.role_definition_ids.foundry_user
+  principal_id       = each.value
+}
+
 resource "azurerm_role_assignment" "project_foundry_user" {
   scope                            = azurerm_cognitive_account.main.id
   role_definition_id               = local.role_definition_ids.foundry_user

@@ -9,6 +9,7 @@ The repository currently includes:
 
 - `research-assistant`: a prompt agent with Web Search and citation validation.
 - `architecture-advisor`: a containerized Microsoft Agent Framework hosted agent with Foundry Toolbox (Microsoft Learn MCP and architecture decision brief skill).
+- `incident-triage`: a containerized [Flock](https://github.com/whiteducksoftware/flock) hosted agent whose blackboard runs a three-agent triage crew with no external tools.
 
 ## Architecture
 
@@ -62,15 +63,25 @@ uv run deploy-agent --list
 uv run deploy-agent research-assistant
 ```
 
-Build and deploy the hosted example:
+Build and deploy a hosted example:
 
 ```bash
 ACR_NAME="$(terraform -chdir=infra output -raw container_registry_name)"
-IMAGE_ENV_FILE="$(scripts/publish-hosted-image.sh "$ACR_NAME")"
+IMAGE_ENV_FILE="$(scripts/publish-hosted-image.sh "$ACR_NAME" architecture-advisor)"
 set -a
 . "$IMAGE_ENV_FILE"
 set +a
 uv run deploy-agent architecture-advisor
+```
+
+The Flock example follows the same two steps:
+
+```bash
+IMAGE_ENV_FILE="$(scripts/publish-hosted-image.sh "$ACR_NAME" incident-triage)"
+set -a
+. "$IMAGE_ENV_FILE"
+set +a
+uv run deploy-agent incident-triage
 ```
 
 Run the local quality checks:

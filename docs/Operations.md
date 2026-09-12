@@ -297,11 +297,33 @@ Use the deployment record's smoke evidence and failure message. Failed
 candidates remain available for diagnosis, but traffic is not intentionally
 promoted to them.
 
+For `incident-triage`, smoke requires at least three `message` output items.
+The hosted runtime emits exactly one per published blackboard artifact, so three
+items can only exist if both parallel agents and the joining commander
+published. A partial cascade produces fewer and fails the gate.
+
 For `architecture-advisor`, smoke requires:
 - Completed named `load_skill` setup call.
 - Completed `microsoft_docs_search` or `microsoft_docs_fetch` call.
 - At least one source citation from `learn.microsoft.com`, including structured
   `url_citation` annotations when the URL is not repeated in output text.
+
+### Model Inference 401 or 403 Errors
+
+`incident-triage` calls model inference directly rather than through the Agents
+API, using its managed identity with scope
+`https://cognitiveservices.azure.com/.default`. That is an **account**-scope
+data plane call, and a project-scope role assignment does not inherit upward to
+the account.
+
+1. Assign the `Foundry User` role to the agent's service principal on the
+   Foundry *account*, not only the project.
+2. Subscription `Owner` is a control-plane role and conveys no Cognitive
+   Services data actions; operators running the agent locally need the same
+   account-scope grant, which `infra/rbac.tf` provisions for
+   `operator_object_ids`.
+3. Delivery retries 401/403 smoke failures three times; allow several minutes
+   for RBAC propagation before redeploying if those retries are exhausted.
 
 ### Toolbox 401 or 403 Errors
 

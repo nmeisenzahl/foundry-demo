@@ -20,3 +20,13 @@ updates:
     directory: "/src/agents/architecture_advisor"
     schedule:
       interval: "weekly"
+
+  - package-ecosystem: "uv"
+    directory: "/src/agents/incident_triage"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/src/agents/incident_triage"
+    schedule:
+      interval: "weekly"

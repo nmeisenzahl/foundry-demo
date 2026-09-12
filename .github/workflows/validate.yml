@@ -90,14 +90,22 @@ jobs:
         run: uv run pytest -q
 
   hosted-runtime:
-    name: Hosted runtime validation
+    name: Hosted runtime validation (${{ matrix.agent }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - agent: architecture-advisor
+            directory: src/agents/architecture_advisor
+          - agent: incident-triage
+            directory: src/agents/incident_triage
     env:
       UV_PYTHON: "3.13"
     defaults:
       run:
-        working-directory: src/agents/architecture_advisor
+        working-directory: ${{ matrix.directory }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -108,7 +116,7 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
           enable-cache: true
-          cache-dependency-glob: src/agents/architecture_advisor/uv.lock
+          cache-dependency-glob: ${{ matrix.directory }}/uv.lock
 
       - name: Install Python 3.13
         run: uv python install 3.13
@@ -147,12 +155,20 @@ jobs:
         run: terraform -chdir=infra validate
 
   hosted-container:
-    name: Hosted container build validation
+    name: Hosted container build validation (${{ matrix.agent }})
     # The deployment path builds and pushes the same image, so this job only
     # adds value before a change reaches main.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - agent: architecture-advisor
+            directory: src/agents/architecture_advisor
+          - agent: incident-triage
+            directory: src/agents/incident_triage
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -162,9 +178,9 @@ jobs:
       - name: Validate hosted image build
         uses: ./.github/actions/build-hosted-image
         with:
-          context: src/agents/architecture_advisor
+          context: ${{ matrix.directory }}
           push: "false"
           tags: >-
-            architecture-advisor:pr-${{
+            ${{ matrix.agent }}:pr-${{
             github.event.pull_request.number || github.run_id }}
-          cache-scope: architecture-advisor
+          cache-scope: ${{ matrix.agent }}

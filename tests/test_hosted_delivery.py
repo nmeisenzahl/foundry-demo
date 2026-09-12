@@ -6,6 +6,7 @@ import pytest
 from azure.ai.projects.models import AgentVersionStatus
 
 from foundry_demo.agents.architecture_advisor import ARCHITECTURE_ADVISOR_SPEC
+from foundry_demo.agents.incident_triage import INCIDENT_TRIAGE_SPEC
 from foundry_demo.delivery.config import DeploymentConfig
 from foundry_demo.delivery.contracts import (
     FOUNDRY_METADATA_MAX_ENTRIES,
@@ -69,6 +70,49 @@ def test_create_hosted_candidate():
     assert definition.environment_variables["AZURE_AI_MODEL_DEPLOYMENT_NAME"] == "model"
     assert definition.environment_variables["AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING"] == "true"
     assert definition.environment_variables["TOOLBOX_ENDPOINT"] == candidate.toolbox_endpoint
+
+
+def toolbox_free_config():
+    return DeploymentConfig(
+        project_endpoint="https://example.services.ai.azure.com/api/projects/dev",
+        model_deployment_name="model",
+        temperature=None,
+        environ={
+            "FOUNDRY_INCIDENT_TRIAGE_IMAGE": "example.azurecr.io/incident-triage:v1",
+            "FOUNDRY_INCIDENT_TRIAGE_IMAGE_DIGEST": "sha256:" + "b" * 64,
+        },
+    )
+
+
+def test_create_hosted_candidate_without_a_toolbox():
+    project = MagicMock()
+    project.agents.create_version.return_value = SimpleNamespace(version="3", status="creating")
+
+    candidate = HostedAgentOperations().create_candidate(
+        project, INCIDENT_TRIAGE_SPEC, toolbox_free_config(), {"deployment_id": "d"}
+    )
+
+    definition = project.agents.create_version.call_args.kwargs["definition"]
+    metadata = project.agents.create_version.call_args.kwargs["metadata"]
+
+    # No skill or toolbox version is created, and nothing toolbox-shaped leaks
+    # into the definition or the release metadata.
+    project.beta.skills.create_from_files.assert_not_called()
+    project.toolboxes.create_version.assert_not_called()
+    assert "TOOLBOX_ENDPOINT" not in definition.environment_variables
+    assert candidate.skill_name is None
+    assert candidate.skill_version is None
+    assert candidate.toolbox_name is None
+    assert candidate.toolbox_endpoint is None
+    assert not {"skill", "toolbox", "toolbox_endpoint"} & set(metadata)
+
+    assert candidate.version == "3"
+    assert candidate.artifact_reference == "incident-triage"
+    assert definition.container_configuration.image == (
+        "example.azurecr.io/incident-triage@sha256:" + "b" * 64
+    )
+    assert definition.memory == "4Gi"
+    assert definition.environment_variables["AZURE_AI_MODEL_DEPLOYMENT_NAME"] == "model"
 
 
 def test_hosted_version_metadata_fits_foundry_limit():

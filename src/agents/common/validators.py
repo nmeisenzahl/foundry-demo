@@ -41,6 +41,25 @@ def validate_annotations(
     return None
 
 
+def validate_output_items(
+    evidence: "SmokeEvidence",
+    item_type: str,
+    min_count: int = 1,
+) -> str | None:
+    """Check that the smoke response emitted the minimum number of output items.
+
+    Unlike :func:`validate_tool_calls` this counts every item of the type, not
+    only completed ones, so it fits agents whose evidence is the shape of the
+    response rather than tool execution.
+    """
+    count = evidence.output_item_counts.get(item_type, 0)
+    if count < min_count:
+        return (
+            f"Expected at least {min_count} {item_type} output item(s), found {count}."
+        )
+    return None
+
+
 def _tool_count(completed_tool_name_counts: dict[str, int], target_name: str) -> int:
     direct = completed_tool_name_counts.get(target_name, 0)
     if direct:

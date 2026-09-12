@@ -18,7 +18,7 @@ dev = ["pytest==9.1.1", "ruff==0.16.6"]
 prerelease = "allow"
 
 [tool.pytest.ini_options]
-testpaths = ["../../../tests/test_hosted_runtime.py"]
+testpaths = ["../../../tests/test_hosted_runtime_architecture_advisor.py"]
 pythonpath = ["."]
 
 [tool.ruff]

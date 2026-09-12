@@ -58,6 +58,11 @@ output "architecture_advisor_repository" {
   value       = local.names.architecture_advisor_repository
 }
 
+output "incident_triage_repository" {
+  description = "Repository name used for the incident triage image."
+  value       = local.names.incident_triage_repository
+}
+
 output "github_actions_environment_variables" {
   description = "Seven non-sensitive GitHub Environment variables for deployment authentication and runtime configuration."
   value       = local.github_actions_environment_variables

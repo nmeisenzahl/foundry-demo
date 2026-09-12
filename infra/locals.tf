@@ -14,6 +14,7 @@ locals {
     container_registry              = "${replace(var.project_name, "-", "")}acr${random_string.suffix.result}"
     github_agent_delivery           = "${var.project_name}-dev-gh-delivery"
     architecture_advisor_repository = "architecture-advisor"
+    incident_triage_repository      = "incident-triage"
   }
 
   # Repositories with immutable subject claims present
