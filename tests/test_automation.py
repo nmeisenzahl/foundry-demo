@@ -65,7 +65,10 @@ def test_select_agents_supports_all_single_and_comma_separated() -> None:
         "research-assistant",
     )
     assert tuple(
-        agent.name for agent in select_agents(config, "research-assistant, architecture-advisor")
+        agent.name
+        for agent in select_agents(
+            config, "research-assistant, architecture-advisor, incident-triage"
+        )
     ) == tuple(list_agents())
 
 
@@ -127,14 +130,20 @@ def test_load_automation_config_rejects_invalid_schema_and_data(tmp_path: Path) 
         load_automation_config(non_positive_retention_path)
 
     incomplete_hosted = copy.deepcopy(data)
-    incomplete_hosted["agents"][0]["image_reference_env"] = ""
+    hosted_agent = next(
+        agent for agent in incomplete_hosted["agents"] if agent["kind"] == "hosted"
+    )
+    hosted_agent["image_reference_env"] = ""
     incomplete_hosted_path = tmp_path / "incomplete_hosted.json"
     _write_json(incomplete_hosted_path, incomplete_hosted)
     with pytest.raises(AutomationConfigError, match="hosted"):
         load_automation_config(incomplete_hosted_path)
 
     prompt_has_image_metadata = copy.deepcopy(data)
-    prompt_has_image_metadata["agents"][1]["image_repository"] = "unexpected"
+    prompt_agent = next(
+        agent for agent in prompt_has_image_metadata["agents"] if agent["kind"] == "prompt"
+    )
+    prompt_agent["image_repository"] = "unexpected"
     prompt_has_image_metadata_path = tmp_path / "prompt_has_image_metadata.json"
     _write_json(prompt_has_image_metadata_path, prompt_has_image_metadata)
     with pytest.raises(AutomationConfigError, match="prompt"):
@@ -160,6 +169,17 @@ def test_render_matrix_returns_compact_registry_sorted_json() -> None:
             "image_repository": "architecture-advisor",
             "image_reference_env": "FOUNDRY_ARCHITECTURE_ADVISOR_IMAGE",
             "image_digest_env": "FOUNDRY_ARCHITECTURE_ADVISOR_IMAGE_DIGEST",
+        },
+        {
+            "agent_name": "incident-triage",
+            "agent_kind": "hosted",
+            "environment": "dev",
+            "github_environment": "dev",
+            "artifact_retention_days": 90,
+            "image_context": "src/agents/incident_triage",
+            "image_repository": "incident-triage",
+            "image_reference_env": "FOUNDRY_INCIDENT_TRIAGE_IMAGE",
+            "image_digest_env": "FOUNDRY_INCIDENT_TRIAGE_IMAGE_DIGEST",
         },
         {
             "agent_name": "research-assistant",

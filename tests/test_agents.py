@@ -13,6 +13,7 @@ from foundry_demo.agents import (
     list_agents,
 )
 from foundry_demo.agents.architecture_advisor import ARCHITECTURE_ADVISOR_SPEC
+from foundry_demo.agents.incident_triage import INCIDENT_TRIAGE_SPEC
 from foundry_demo.agents.research_assistant import RESEARCH_ASSISTANT_SPEC
 from foundry_demo.delivery.prompt import build_definition
 from foundry_demo.delivery.smoke import SmokeEvidence, SmokeTestError
@@ -22,7 +23,9 @@ def test_list_and_get_agents() -> None:
     names = list_agents()
     assert "research-assistant" in names
     assert "architecture-advisor" in names
+    assert "incident-triage" in names
     assert ARCHITECTURE_ADVISOR_SPEC.kind is AgentKind.HOSTED
+    assert INCIDENT_TRIAGE_SPEC.kind is AgentKind.HOSTED
     assert RESEARCH_ASSISTANT_SPEC.kind is AgentKind.PROMPT
 
     spec = get_agent("research-assistant")
@@ -199,6 +202,37 @@ def test_architecture_advisor_smoke_validation() -> None:
     )
     with pytest.raises(SmokeTestError, match="No completed load_skill"):
         ARCHITECTURE_ADVISOR_SPEC.validate_smoke(invalid_evidence)
+
+
+def test_incident_triage_needs_no_toolbox_or_forced_tool_call() -> None:
+    # The Flock crew calls no tools, so a forced tool choice would fail by
+    # construction and there is nothing for a Toolbox to expose.
+    assert INCIDENT_TRIAGE_SPEC.toolbox is None
+    assert INCIDENT_TRIAGE_SPEC.smoke_tool_choice is None
+    assert INCIDENT_TRIAGE_SPEC.smoke_setup_prompt is None
+    assert INCIDENT_TRIAGE_SPEC.image_env_var == "FOUNDRY_INCIDENT_TRIAGE_IMAGE"
+    assert INCIDENT_TRIAGE_SPEC.image_digest_env_var == "FOUNDRY_INCIDENT_TRIAGE_IMAGE_DIGEST"
+
+
+def test_incident_triage_smoke_requires_the_full_cascade() -> None:
+    def evidence(message_count: int) -> SmokeEvidence:
+        return SmokeEvidence(
+            response_id="resp-1",
+            response_status="completed",
+            output_text_present=True,
+            output_item_counts={"message": message_count},
+            completed_output_item_counts={"message": message_count},
+            annotation_counts={},
+        )
+
+    assert INCIDENT_TRIAGE_SPEC.validate_smoke is not None
+    # Impact assessment, root-cause hypothesis, and the action plan that joins them.
+    INCIDENT_TRIAGE_SPEC.validate_smoke(evidence(3))
+    INCIDENT_TRIAGE_SPEC.validate_smoke(evidence(4))
+
+    for partial in (0, 1, 2):
+        with pytest.raises(SmokeTestError, match="at least 3 message"):
+            INCIDENT_TRIAGE_SPEC.validate_smoke(evidence(partial))
 
 
 def test_subfolder_package_exports() -> None:

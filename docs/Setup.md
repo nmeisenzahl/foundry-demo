@@ -17,8 +17,9 @@ deployment.
   `Microsoft.OperationalInsights`, `Microsoft.Insights`, and
   `Microsoft.Authorization`, and `Microsoft.ContainerRegistry`
 
-The root project uses Python 3.11. The standalone hosted runtime under
-`src/agents/architecture_advisor/` has its own Python 3.13 environment.
+The root project uses Python 3.11. Each standalone hosted runtime has its own
+Python 3.13 environment: `src/agents/architecture_advisor/` and
+`src/agents/incident_triage/`.
 
 ## Azure Login and Capacity
 

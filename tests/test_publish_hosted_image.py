@@ -2,8 +2,23 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 
-def test_publish_script_writes_image_metadata(tmp_path: Path):
+
+@pytest.mark.parametrize(
+    ("agent_name", "env_prefix", "context"),
+    [
+        (
+            "architecture-advisor",
+            "FOUNDRY_ARCHITECTURE_ADVISOR",
+            "src/agents/architecture_advisor",
+        ),
+        ("incident-triage", "FOUNDRY_INCIDENT_TRIAGE", "src/agents/incident_triage"),
+    ],
+)
+def test_publish_script_writes_image_metadata(
+    tmp_path: Path, agent_name: str, env_prefix: str, context: str
+):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     log = tmp_path / "commands.log"
@@ -22,7 +37,7 @@ def test_publish_script_writes_image_metadata(tmp_path: Path):
     env_file = tmp_path / "image.env"
     env = {**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}", "COMMAND_LOG": str(log)}
     result = subprocess.run(
-        ["scripts/publish-hosted-image.sh", "demo", "v1", str(env_file)],
+        ["scripts/publish-hosted-image.sh", "demo", agent_name, "v1", str(env_file)],
         check=True,
         capture_output=True,
         text=True,
@@ -30,9 +45,19 @@ def test_publish_script_writes_image_metadata(tmp_path: Path):
     )
     assert result.stdout.strip() == str(env_file)
     content = env_file.read_text()
-    assert "FOUNDRY_ARCHITECTURE_ADVISOR_IMAGE=demo.azurecr.io/architecture-advisor:v1-" in content
-    assert "FOUNDRY_ARCHITECTURE_ADVISOR_IMAGE_DIGEST=sha256:" in content
+    assert f"{env_prefix}_IMAGE=demo.azurecr.io/{agent_name}:v1-" in content
+    assert f"{env_prefix}_IMAGE_DIGEST=sha256:" in content
     commands = log.read_text()
     assert "buildx build --platform linux/amd64 --push" in commands
-    assert "src/agents/architecture_advisor" in commands
-    assert (Path("src/agents/architecture_advisor") / "Dockerfile").is_file()
+    assert context in commands
+    assert (Path(context) / "Dockerfile").is_file()
+
+
+def test_publish_script_rejects_an_unknown_agent(tmp_path: Path):
+    result = subprocess.run(
+        ["scripts/publish-hosted-image.sh", "demo", "not-an-agent"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "No Dockerfile found" in result.stderr

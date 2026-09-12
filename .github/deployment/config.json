@@ -31,6 +31,17 @@
       ]
     },
     {
+      "name": "incident-triage",
+      "kind": "hosted",
+      "image_context": "src/agents/incident_triage",
+      "image_repository": "incident-triage",
+      "image_reference_env": "FOUNDRY_INCIDENT_TRIAGE_IMAGE",
+      "image_digest_env": "FOUNDRY_INCIDENT_TRIAGE_IMAGE_DIGEST",
+      "source_paths": [
+        "src/agents/incident_triage/"
+      ]
+    },
+    {
       "name": "research-assistant",
       "kind": "prompt",
       "image_context": "",

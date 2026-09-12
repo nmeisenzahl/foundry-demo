@@ -11,6 +11,7 @@ src/agents/
   common/                # Shared contracts and validators
   research_assistant/    # Prompt agent definition, tools, and instructions
   architecture_advisor/  # Hosted runtime, definition, Toolbox spec, Dockerfile, and lockfile
+  incident_triage/       # Flock blackboard runtime, definition, Dockerfile, and lockfile
   registry.py            # Discovers packages through their AGENT_SPEC export
   __init__.py            # Public agent contracts and registry API
 ```
@@ -128,7 +129,7 @@ that identity exists:
 ```bash
 terraform -chdir=infra apply -var-file=env/dev.tfvars
 ACR_NAME="$(terraform -chdir=infra output -raw container_registry_name)"
-IMAGE_ENV_FILE="$(scripts/publish-hosted-image.sh "$ACR_NAME")"
+IMAGE_ENV_FILE="$(scripts/publish-hosted-image.sh "$ACR_NAME" architecture-advisor)"
 set -a
 . "$IMAGE_ENV_FILE"
 set +a
@@ -178,21 +179,150 @@ forces a named `load_skill` call, and performs a separate grounded comparison.
 The version is promoted only when the combined evidence includes the Skill call,
 a Microsoft Learn function call, and a `learn.microsoft.com` citation.
 
+## Deploy the Flock Hosted Agent
+
+The `incident-triage` agent runs a [Flock](https://github.com/whiteducksoftware/flock)
+blackboard inside the container. It is the repository's toolbox-free hosted
+example: no MCP servers, no Skills, no external tools.
+
+### Blackboard Topology
+
+```text
+IncidentReport
+   |-- impact_assessor      --> ImpactAssessment
+   |-- root_cause_analyst   --> RootCauseHypothesis
+              \-- AND gate --> incident_commander --> ActionPlan
+```
+
+Agents subscribe to *types*, not to each other. `impact_assessor` and
+`root_cause_analyst` both consume `IncidentReport`, so Flock runs them
+concurrently. `incident_commander` consumes both of their output types, which
+Flock treats as an AND gate and fires once, after both have published. No edges
+are declared anywhere in `flock_app.py` -- the topology is a consequence of the
+Pydantic contracts.
+
+One HTTP turn drives one blackboard run. The handler publishes the caller's text
+as an `IncidentReport` under a correlation ID, waits for the cascade, and emits
+each resulting artifact as its own Responses output item. That makes the
+multi-agent flow visible to callers and gives smoke validation something to
+assert: three output items can only exist if the full cascade completed.
+
+### Model Access
+
+The Foundry account sets `local_auth_enabled = false`, so there are no API keys.
+Flock reaches the model through DSPy and LiteLLM, authenticating with the
+container's managed identity via LiteLLM's `azure_ad_token_provider` hook
+(`flock.engines.auth.azure.get_default_azure_token_provider`).
+
+Two runtime details are load-bearing and easy to lose:
+
+- LiteLLM cannot infer a model family from an Azure *deployment* name, so its
+  parameter mapping never fires. Current Foundry chat models reject
+  `max_tokens`, which `DSPyEngine` always sends, so the agent passes
+  `additional_drop_params=["max_tokens"]`. `DSPyEngine` reserves
+  `max_completion_tokens` without ever setting it, so no replacement cap can be
+  supplied and the model's default output limit applies.
+- Flock-level token streaming is disabled. The handler emits whole artifacts
+  rather than tokens, and LiteLLM's `StreamWrapper` fails under the hosting
+  runtime's GenAI tracing instrumentation.
+
+The inference base URL is derived from the injected `FOUNDRY_PROJECT_ENDPOINT`
+and validated in `model_endpoint.py`. Both `AZURE_API_BASE` and
+`AZURE_API_VERSION` override the derived values; the API version must cover
+whichever model the project deploys.
+
+### Deploy
+
+```bash
+ACR_NAME="$(terraform -chdir=infra output -raw container_registry_name)"
+IMAGE_ENV_FILE="$(scripts/publish-hosted-image.sh "$ACR_NAME" incident-triage)"
+set -a
+. "$IMAGE_ENV_FILE"
+set +a
+uv run deploy-agent incident-triage
+```
+
+As with `architecture-advisor`, Foundry provisions the agent's managed identity
+only after the first hosted version exists. Grant that identity
+`Monitoring Metrics Publisher` on Application Insights and the `Foundry User`
+role on the Foundry **account**, then redeploy:
+
+```bash
+APPI_ID="$(terraform -chdir=infra output -raw application_insights_id)"
+ACCOUNT_ID="$(terraform -chdir=infra output -raw foundry_account_id)"
+AGENT_SP_ID="$(az ad sp list --filter "startswith(displayName, '$(terraform -chdir=infra output -raw foundry_account_name)-$(terraform -chdir=infra output -raw foundry_project_name)-incident-triage')" --query "[0].id" -o tsv)"
+if [ -z "$AGENT_SP_ID" ]; then
+  echo "Hosted agent service principal was not found." >&2
+  exit 1
+fi
+az role assignment create \
+  --assignee-object-id "$AGENT_SP_ID" \
+  --assignee-principal-type "ServicePrincipal" \
+  --role "Monitoring Metrics Publisher" \
+  --scope "$APPI_ID"
+az role assignment create \
+  --assignee-object-id "$AGENT_SP_ID" \
+  --assignee-principal-type "ServicePrincipal" \
+  --role "53ca6127-db72-4b80-b1b0-d745d6d5456d" \
+  --scope "$ACCOUNT_ID"
+```
+
+The account scope matters: this agent calls model inference directly rather than
+the Agents API, and a project-scope assignment does not inherit upward to the
+account. `infra/rbac.tf` provisions the same account-scope grant for
+`operator_object_ids` so operators can run the agent locally.
+
+### Dependency Overrides
+
+`flock-core` pins `opentelemetry-api` and `opentelemetry-sdk` to `1.34.1`, while
+every release of `azure-ai-agentserver-core` requires `>=1.43`. Both use only
+stable OpenTelemetry 1.x APIs, so `src/agents/incident_triage/pyproject.toml`
+forces the newer runtime through `[tool.uv] override-dependencies` rather than
+forking either dependency. `googleapis-common-protos` is overridden for the same
+reason: `flock-core`'s deprecated Jaeger exporter caps it below what the OTLP
+exporter needs, and nothing here exports to Jaeger.
+
 ## Hosted Local Development
 
 ```bash
-cd src/agents/architecture_advisor
+cd src/agents/architecture_advisor   # or src/agents/incident_triage
 uv sync --dev
 uv run pytest -q
 uv run ruff check .
 uv run python main.py
 ```
 
-The hosted project has its own `pyproject.toml`, `uv.lock`, `Dockerfile`, and
-`.dockerignore`. Its root-level test is `tests/test_hosted_runtime.py`. The
-hosted environment selects that test; the root Python 3.11 environment collects
-but skips it because hosted runtime dependencies are not installed there.
+The server listens on port `8088`. Running it locally needs the two variables
+Foundry would otherwise inject:
 
-The server listens on port `8088`. Foundry injects
-`FOUNDRY_PROJECT_ENDPOINT`, `AZURE_AI_MODEL_DEPLOYMENT_NAME`, and Application
-Insights configuration into the hosted runtime.
+```bash
+export FOUNDRY_PROJECT_ENDPOINT="$(
+  terraform -chdir=../../../infra output -json foundry_project_endpoints \
+    | python3 -c 'import json, sys; print(json.load(sys.stdin)["AI Foundry API"])'
+)"
+export AZURE_AI_MODEL_DEPLOYMENT_NAME="$(
+  terraform -chdir=../../../infra output -raw model_deployment_name
+)"
+uv run python main.py
+```
+
+For `incident-triage`, one request should return three output items:
+
+```bash
+curl -s localhost:8088/responses \
+  -H 'content-type: application/json' \
+  -d '{"input":"Checkout returns HTTP 500 for 30% of requests since the 14:05 deploy."}' \
+  | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["output"]))'
+```
+
+Each hosted project has its own `pyproject.toml`, `uv.lock`, `Dockerfile`, and
+`.dockerignore`, and selects a single root-level test file:
+`tests/test_hosted_runtime_architecture_advisor.py` and
+`tests/test_hosted_runtime_incident_triage.py`. Both are collected but skipped
+in the root Python 3.11 environment, where hosted runtime dependencies are not
+installed. The files are named per agent because both hosted projects have a
+top-level `main.py`, which would otherwise collide on the module name.
+
+In the deployed container, Foundry injects `FOUNDRY_PROJECT_ENDPOINT`,
+`AZURE_AI_MODEL_DEPLOYMENT_NAME`, and Application Insights configuration into
+the hosted runtime.
