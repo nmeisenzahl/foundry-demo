@@ -21,6 +21,7 @@ from azure.ai.agentserver.responses import (
 )
 from dotenv import load_dotenv
 from flock import Flock
+from flock.models.system_artifacts import WorkflowError
 from pydantic import BaseModel
 
 from flock_app import (
@@ -68,11 +69,35 @@ async def get_flock() -> Flock:
     return _flock
 
 
-def _require_one(artifacts: list[BaseModel], *, artifact_type: type[BaseModel]) -> BaseModel:
+class TriageError(RuntimeError):
+    """The cascade ended without producing the full artifact set."""
+
+
+def describe_workflow_errors(errors: list[WorkflowError]) -> str:
+    """Summarise why agents dropped out of a cascade.
+
+    Flock does not propagate an agent failure to the caller: it publishes a
+    WorkflowError artifact and lets the orchestrator go idle. Without this the
+    only symptom is a missing artifact, which says nothing about the cause.
+    """
+    if not errors:
+        return "no agent reported an error"
+    return "; ".join(
+        f"{error.failed_agent}: {error.error_type}: {error.error_message}"
+        for error in errors
+    )
+
+
+def _require_one(
+    artifacts: list[BaseModel],
+    *,
+    artifact_type: type[BaseModel],
+    errors: list[WorkflowError],
+) -> BaseModel:
     if not artifacts:
-        raise RuntimeError(
+        raise TriageError(
             f"Blackboard produced no {artifact_type.__name__}; the triage cascade "
-            "did not complete."
+            f"did not complete ({describe_workflow_errors(errors)})."
         )
     return artifacts[-1]
 
@@ -90,8 +115,9 @@ async def run_triage(raw_report: str, *, correlation_id: str) -> list[BaseModel]
             await flock.store.get_by_type(artifact_type, correlation_id=correlation_id)
             for artifact_type in (ImpactAssessment, RootCauseHypothesis, ActionPlan)
         ]
+        errors = await flock.store.get_by_type(WorkflowError, correlation_id=correlation_id)
     return [
-        _require_one(artifacts, artifact_type=artifact_type)
+        _require_one(artifacts, artifact_type=artifact_type, errors=errors)
         for artifacts, artifact_type in zip(
             collected,
             (ImpactAssessment, RootCauseHypothesis, ActionPlan),
@@ -112,12 +138,21 @@ async def handler(
     cancellation_signal: asyncio.Event,
 ):
     """Run the blackboard once and emit one output item per artifact."""
-    raw_report = await context.get_input_text()
-    artifacts = await run_triage(raw_report, correlation_id=context.response_id)
-
+    # Everything that can fail runs *after* response.created. A handler that
+    # raises before the first event leaves the host with no response to fail,
+    # so it answers HTTP 500 with a generic body and the real cause survives
+    # only in the container log. Emitting first turns the same failure into a
+    # response.failed the caller can read.
     stream = ResponseEventStream(response_id=context.response_id, request=request)
     yield stream.emit_created()
     yield stream.emit_in_progress()
+    try:
+        raw_report = await context.get_input_text()
+        artifacts = await run_triage(raw_report, correlation_id=context.response_id)
+    except Exception as exc:
+        LOGGER.exception("Triage cascade failed")
+        yield stream.emit_failed(message=str(exc))
+        return
     for artifact in artifacts:
         if cancellation_signal.is_set():
             break

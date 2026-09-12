@@ -60,3 +60,31 @@ resource "azurerm_role_assignment" "project_monitoring_metrics_publisher" {
   principal_id                     = azurerm_cognitive_account_project.main.identity[0].principal_id
   skip_service_principal_aad_check = true
 }
+
+# A hosted agent container does not run as the project's managed identity: it
+# runs as a per-agent identity Foundry mints for it (the `instance_identity` on
+# the agent resource). Anything the container calls itself therefore needs its
+# own grant. Agents that reach the model through the project endpoint, and
+# agents that call inference on the account endpoint directly, are both covered
+# here because an account-scope assignment inherits down to the project.
+resource "azurerm_role_assignment" "hosted_agent_foundry_user" {
+  for_each = var.hosted_agent_object_ids
+
+  scope                            = azurerm_cognitive_account.main.id
+  role_definition_id               = local.role_definition_ids.foundry_user
+  principal_id                     = each.value
+  skip_service_principal_aad_check = true
+}
+
+# Same identity, same reason: the container exports its own traces and live
+# metrics, so publishing rights on the project's managed identity do not help
+# it. Without this the container logs a Forbidden from the exporter on every
+# collection interval, which buries the failures worth reading.
+resource "azurerm_role_assignment" "hosted_agent_monitoring_metrics_publisher" {
+  for_each = var.hosted_agent_object_ids
+
+  scope                            = azurerm_application_insights.main.id
+  role_definition_id               = local.role_definition_ids.monitoring_metrics_publisher
+  principal_id                     = each.value
+  skip_service_principal_aad_check = true
+}

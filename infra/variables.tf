@@ -116,3 +116,25 @@ variable "operator_object_ids" {
     error_message = "operator_object_ids entries must be valid UUIDs."
   }
 }
+
+variable "hosted_agent_object_ids" {
+  description = <<-DESC
+    Entra ID object IDs of the per-agent identities Foundry creates for hosted
+    agents, keyed by agent name. Foundry mints these lazily when an agent is
+    first created, so Terraform cannot derive them: reading them back would
+    need Microsoft Graph directory permissions that the deploying workload
+    identity is not granted. They are supplied explicitly, like
+    operator_object_ids. Read one with:
+      az ad sp list --filter "displayName eq '<account>-<project>-<agent>-AgentIdentity'" --query "[0].id" -o tsv
+  DESC
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for id in values(var.hosted_agent_object_ids) :
+      can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", id))
+    ])
+    error_message = "hosted_agent_object_ids values must be valid UUIDs."
+  }
+}

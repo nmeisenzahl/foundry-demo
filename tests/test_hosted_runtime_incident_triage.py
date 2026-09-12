@@ -1,5 +1,7 @@
 import asyncio
+import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +19,7 @@ sys.path.insert(
 
 import flock_app  # noqa: E402
 import main  # noqa: E402
+from flock.models.system_artifacts import WorkflowError  # noqa: E402
 from flock.registry import type_registry  # noqa: E402
 from model_endpoint import (  # noqa: E402
     DEFAULT_API_VERSION,
@@ -148,8 +151,27 @@ def test_format_artifact_labels_the_type() -> None:
 
 
 def test_require_one_rejects_an_incomplete_cascade() -> None:
-    with pytest.raises(RuntimeError, match="ActionPlan"):
-        main._require_one([], artifact_type=flock_app.ActionPlan)
+    with pytest.raises(main.TriageError, match="no agent reported an error"):
+        main._require_one([], artifact_type=flock_app.ActionPlan, errors=[])
+
+
+def test_require_one_reports_why_the_agents_dropped_out() -> None:
+    """A missing artifact is a symptom; the WorkflowError says what happened."""
+    errors = [
+        WorkflowError(
+            failed_agent="impact_assessor",
+            error_type="AuthenticationError",
+            error_message="Principal does not have access to API/Operation.",
+            timestamp=datetime(2026, 9, 12, 8, 45, tzinfo=UTC),
+        )
+    ]
+
+    with pytest.raises(main.TriageError) as excinfo:
+        main._require_one([], artifact_type=flock_app.ImpactAssessment, errors=errors)
+
+    message = str(excinfo.value)
+    assert "impact_assessor" in message
+    assert "Principal does not have access to API/Operation." in message
 
 
 class _StubStore:
@@ -203,6 +225,7 @@ def _stub_flock() -> _StubFlock:
                         comms_update="Checkout is degraded; a rollback is in progress.",
                     )
                 ],
+                WorkflowError: [],
             }
         )
     )
@@ -227,7 +250,7 @@ def test_run_triage_publishes_and_collects_under_one_correlation_id() -> None:
     assert report.raw_report == "checkout is failing"
     assert correlation_id == "resp-1"
     assert stub.idle_calls == 1
-    assert stub.store.correlation_ids == ["resp-1", "resp-1", "resp-1"]
+    assert stub.store.correlation_ids == ["resp-1"] * 4
 
 
 def test_handler_emits_one_output_item_per_artifact() -> None:
@@ -251,3 +274,32 @@ def test_handler_emits_one_output_item_per_artifact() -> None:
     assert types[0] == "response.created"
     assert types[-1] == "response.completed"
     assert types.count("response.output_item.done") == 3
+
+
+def test_handler_reports_a_failed_cascade_on_the_stream() -> None:
+    """Raising before response.created costs the caller the diagnosis.
+
+    The host has no response to fail at that point, so it answers a bare
+    HTTP 500 and the cause stays in the container log.
+    """
+
+    class _Context:
+        response_id = "resp-3"
+
+        async def get_input_text(self):
+            return "checkout is failing"
+
+    async def exercise():
+        with patch.object(main, "run_triage", side_effect=main.TriageError("blackboard stalled")):
+            return [
+                event
+                async for event in main.handler(None, _Context(), asyncio.Event())
+            ]
+
+    events = asyncio.run(exercise())
+    types = [event["type"] for event in events]
+
+    assert types[0] == "response.created"
+    assert types[-1] == "response.failed"
+    assert types.count("response.output_item.done") == 0
+    assert "blackboard stalled" in json.dumps(events[-1])

@@ -214,6 +214,24 @@ Flock reaches the model through DSPy and LiteLLM, authenticating with the
 container's managed identity via LiteLLM's `azure_ad_token_provider` hook
 (`flock.engines.auth.azure.get_default_azure_token_provider`).
 
+That identity is **not** the project's managed identity. Foundry mints a
+per-agent identity when the agent is first created and runs the container as it,
+so the container inherits none of the project's access. Record its object ID in
+`hosted_agent_object_ids` (`infra/env/dev.tfvars`) so `infra/rbac.tf` grants it
+`Foundry User` on the account and `Monitoring Metrics Publisher` on Application
+Insights:
+
+```bash
+az ad sp list \
+  --filter "displayName eq '<account>-<project>-incident-triage-AgentIdentity'" \
+  --query "[0].id" -o tsv
+```
+
+The identity does not exist until the agent has been deployed once, so a new
+hosted agent fails its first smoke test, then needs its ID recorded and one
+`terraform apply`. See [Operations](Operations.md) for the symptom and the
+one-off unblock.
+
 Two runtime details are load-bearing and easy to lose:
 
 - LiteLLM cannot infer a model family from an Azure *deployment* name, so its

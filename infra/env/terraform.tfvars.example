@@ -16,3 +16,11 @@
 # by this file, so that local runs and GitHub Actions produce identical plans:
 #   export TF_VAR_subscription_id="00000000-0000-0000-0000-000000000000"
 #   export TF_VAR_operator_object_ids='["00000000-0000-0000-0000-000000000000"]'
+#
+# Object IDs of the per-agent identities Foundry creates for hosted agents.
+# They do not exist until an agent has been deployed once; leave the map empty
+# on a first apply and fill it in afterwards.
+#   az ad sp list --filter "displayName eq '<account>-<project>-<agent>-AgentIdentity'" --query "[0].id" -o tsv
+# hosted_agent_object_ids = {
+#   "architecture-advisor" = "00000000-0000-0000-0000-000000000000"
+# }

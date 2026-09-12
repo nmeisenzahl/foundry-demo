@@ -134,6 +134,23 @@ def _merge_evidence(first: SmokeEvidence, second: SmokeEvidence) -> SmokeEvidenc
     )
 
 
+def _error_detail(response: Any) -> str:
+    """Render the error a failed response carries, if it carries one.
+
+    A hosted agent that reports its own failure does so as `response.failed`
+    with an error payload. Reporting only the status would discard the one
+    field that says what actually went wrong inside the container.
+    """
+    error = _get_val(response, "error")
+    if error is None:
+        return ""
+    message = str(_get_val(error, "message", "") or "").strip()
+    code = str(_get_val(error, "code", "") or "").strip()
+    if message and code:
+        return f"Error {code}: {message}"
+    return f"Error: {message or code}" if (message or code) else ""
+
+
 def _validate_response(
     response: Any,
     *,
@@ -167,7 +184,11 @@ def _validate_response(
 
     failures: list[str] = []
     if response_status != "completed":
-        failures.append(f"Response status is {response_status!r}, expected 'completed'.")
+        detail = _error_detail(response)
+        failures.append(
+            f"Response status is {response_status!r}, expected 'completed'."
+            + (f" {detail}" if detail else "")
+        )
 
     if not evidence.output_text_present:
         failures.append("Response output text is empty or blank.")

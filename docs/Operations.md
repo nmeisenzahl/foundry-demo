@@ -310,20 +310,54 @@ For `architecture-advisor`, smoke requires:
 
 ### Model Inference 401 or 403 Errors
 
-`incident-triage` calls model inference directly rather than through the Agents
-API, using its managed identity with scope
-`https://cognitiveservices.azure.com/.default`. That is an **account**-scope
-data plane call, and a project-scope role assignment does not inherit upward to
-the account.
+A hosted agent container does **not** run as the project's managed identity. It
+runs as a per-agent identity that Foundry mints when the agent is first created,
+exposed as `instance_identity.principal_id` on the agent resource and named
+`<account>-<project>-<agent>-AgentIdentity` in Entra ID. Nothing the container
+calls on its own behalf inherits the project's access, so that identity needs
+its own role assignment.
 
-1. Assign the `Foundry User` role to the agent's service principal on the
-   Foundry *account*, not only the project.
-2. Subscription `Owner` is a control-plane role and conveys no Cognitive
+`incident-triage` calls model inference directly rather than through the Agents
+API, using scope `https://cognitiveservices.azure.com/.default` against the
+account endpoint. A project-scope assignment does not inherit upward to the
+account, so the grant has to sit on the account.
+
+The symptom is a smoke failure like `Response status is 'failed' ... Error
+server_error: Blackboard produced no ImpactAssessment ... (impact_assessor:
+AuthenticationError: Principal does not have access to API/Operation.)`.
+
+1. Read the agent identity's object ID:
+
+   ```bash
+   az ad sp list \
+     --filter "displayName eq '<account>-<project>-<agent>-AgentIdentity'" \
+     --query "[0].id" -o tsv
+   ```
+
+2. Add it to `hosted_agent_object_ids` in `infra/env/dev.tfvars` and apply.
+   `infra/rbac.tf` assigns `Foundry User` at the account scope, which inherits
+   down to the project and so covers agents that use either endpoint.
+3. To unblock without waiting for an apply, make the same assignment directly:
+
+   ```bash
+   az role assignment create \
+     --scope "$(az cognitiveservices account show -n <account> -g <rg> --query id -o tsv)" \
+     --role 53ca6127-db72-4b80-b1b0-d745d6d5456d \
+     --assignee-object-id <agent-identity-object-id> \
+     --assignee-principal-type ServicePrincipal
+   ```
+
+4. Subscription `Owner` is a control-plane role and conveys no Cognitive
    Services data actions; operators running the agent locally need the same
    account-scope grant, which `infra/rbac.tf` provisions for
    `operator_object_ids`.
-3. Delivery retries 401/403 smoke failures three times; allow several minutes
+5. Delivery retries 401/403 smoke failures three times; allow several minutes
    for RBAC propagation before redeploying if those retries are exhausted.
+
+Because Foundry creates the identity lazily, a brand-new hosted agent has no
+identity to grant until its first deployment has run. Expect the first
+deployment of a new agent to fail its smoke test, then record the identity and
+apply.
 
 ### Toolbox 401 or 403 Errors
 

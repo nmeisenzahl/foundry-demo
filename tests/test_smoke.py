@@ -43,6 +43,12 @@ class DummyWebSearchCall:
         self.status = status
 
 
+class DummyError:
+    def __init__(self, *, code: str = "server_error", message: str = ""):
+        self.code = code
+        self.message = message
+
+
 class DummyResponse:
     def __init__(
         self,
@@ -51,10 +57,12 @@ class DummyResponse:
         status: str = "completed",
         output_text: str = "Today is 2026-09-08 [1].",
         output=None,
+        error=None,
     ):
         self.id = response_id
         self.status = status
         self.output_text = output_text
+        self.error = error
         self.output = (
             output
             if output is not None
@@ -307,3 +315,57 @@ def test_run_prompt_smoke_failure_conditions(
     assert isinstance(exc_info.value.evidence, SmokeEvidence)
     # Ensure raw output_text or prompt is not exposed in the error message
     assert "https://example.com without structured annotation" not in str(exc_info.value)
+
+
+def test_failed_response_reports_the_error_it_carries() -> None:
+    """A hosted agent reports its own failures as response.failed.
+
+    Reporting only the status would throw away the one field that says what
+    went wrong inside the container, leaving the deploy log with nothing to
+    act on.
+    """
+    openai_client = MagicMock()
+    openai_client.responses.create.return_value = DummyResponse(
+        status="failed",
+        output_text="",
+        output=[],
+        error=DummyError(
+            code="server_error",
+            message=(
+                "Blackboard produced no ImpactAssessment; the triage cascade did not "
+                "complete (impact_assessor: AuthenticationError: Principal does not "
+                "have access to API/Operation.)."
+            ),
+        ),
+    )
+
+    with pytest.raises(SmokeTestError) as exc_info:
+        run_prompt_smoke(
+            openai_client,
+            agent_spec=RESEARCH_ASSISTANT_SPEC,
+            candidate_version="7",
+        )
+
+    message = str(exc_info.value)
+    assert "Response status is 'failed'" in message
+    assert "Error server_error:" in message
+    assert "Principal does not have access to API/Operation." in message
+
+
+def test_response_without_an_error_payload_reports_status_alone() -> None:
+    openai_client = MagicMock()
+    openai_client.responses.create.return_value = DummyResponse(
+        status="incomplete",
+        output_text="",
+        output=[],
+    )
+
+    with pytest.raises(SmokeTestError) as exc_info:
+        run_prompt_smoke(
+            openai_client,
+            agent_spec=RESEARCH_ASSISTANT_SPEC,
+            candidate_version="7",
+        )
+
+    assert "Response status is 'incomplete', expected 'completed'." in str(exc_info.value)
+    assert "Error" not in str(exc_info.value)
