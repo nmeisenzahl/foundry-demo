@@ -240,6 +240,36 @@ assignment to propagate, then repeat:
 terraform -chdir=infra apply -var-file=env/dev.tfvars
 ```
 
+In CI, re-run the failed `Terraform apply` job; it re-plans against current
+state.
+
+### Terraform State Is Locked
+
+Every Terraform command uses `-lock-timeout=5m`, and the `terraform-dev`
+concurrency group serialises workflow runs, so contention normally resolves
+itself. A lease orphaned by an infrastructure failure or a cancelled job must
+be released by hand, using the lock ID from the error message:
+
+```bash
+terraform -chdir=infra force-unlock <LOCK_ID>
+```
+
+Confirm no apply is actually running before forcing the unlock.
+
+### Azure Login From Actions Is Rejected
+
+`AADSTS700213` means the federated credential subject does not match the claim
+GitHub emitted. Compare the credential on `foundrydemo-dev-tf` against:
+
+```bash
+gh api repos/nmeisenzahl/foundry-demo/actions/oidc/customization/sub \
+  --jq '{use_immutable_subject, sub_claim_prefix}'
+```
+
+The trusted subject is that prefix followed by `:environment:dev`. A
+deployment branch restriction added to the `dev` Environment produces a
+different symptom: the plan job never starts on pull request branches.
+
 ### Configuration Is Rejected
 
 Confirm:
@@ -295,8 +325,39 @@ Destroy the Azure resources:
 terraform -chdir=infra destroy -var-file=env/dev.tfvars
 ```
 
-Local Terraform state, deployment records, caches, and generated image
-environment files must remain untracked.
+Deployment records, caches, and generated image environment files must remain
+untracked. Terraform state is remote; see
+[Setup](Setup.md#remote-state).
 
-Terraform apply/destroy remains a local operator workflow until approved
-infrastructure apply workflows and remote state are implemented.
+Destroy remains a local operator action and is never run by CI.
+
+## Terraform CI/CD
+
+`.github/workflows/terraform.yml` owns infrastructure changes. It triggers only
+on changes to `infra/**` or to the workflow file itself.
+
+| Event | Job | Behaviour |
+| --- | --- | --- |
+| `pull_request` | `plan` | `init`, `plan -out=tfplan`, plan rendered into the job summary. Never applies. |
+| `push` to `main` | `apply` | `init`, `plan -out=tfplan`, then `apply` of that saved plan, followed by outputs in the job summary. |
+
+Both jobs run under the `dev` GitHub Environment and authenticate with
+workload identity federation as `foundrydemo-dev-tf`. There is no
+`azure/login` step: the `azurerm` provider and backend exchange the Actions
+OIDC token themselves.
+
+Applying the saved plan file, rather than re-planning inside `apply`,
+guarantees the applied change is exactly the one rendered in the summary
+immediately above it.
+
+A workflow-level `concurrency: terraform-dev` group serialises every run
+against the single state file, with `cancel-in-progress: false` so that no run
+is cancelled mid-apply and leaves an orphaned lease.
+
+Two caveats are accepted rather than engineered around:
+
+- A merge touching both `infra/` and agent code starts `terraform.yml` and
+  `deploy-agents.yml` concurrently, with no ordering guarantee between
+  infrastructure changes and agent delivery.
+- Fork pull requests receive neither Environment variables nor an OIDC token,
+  so the plan job cannot run for them.

@@ -1,5 +1,4 @@
 # Example values. Validate model availability and quota before deployment.
-# subscription_id = "00000000-0000-0000-0000-000000000000"
 # location        = "swedencentral"
 # project_name    = "foundrydemo"
 # model_name      = "gpt-5.6-terra"
@@ -12,3 +11,8 @@
 # Read the exact value from:
 #   gh api repos/<owner>/<name>/actions/oidc/customization/sub --jq .sub_claim_prefix
 # github_oidc_subject_prefix = "repo:octo-org@1234567/foundry-demo@7654321"
+#
+# subscription_id and operator_object_ids are supplied by the environment, not
+# by this file, so that local runs and GitHub Actions produce identical plans:
+#   export TF_VAR_subscription_id="00000000-0000-0000-0000-000000000000"
+#   export TF_VAR_operator_object_ids='["00000000-0000-0000-0000-000000000000"]'

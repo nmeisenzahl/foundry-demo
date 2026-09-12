@@ -27,16 +27,21 @@ candidate passes. These service operations are not one atomic transaction.
 
 ## Quick Start
 
-Requirements: Python 3.11, `uv`, Terraform 1.9 or later, Azure CLI, Docker for
+Requirements: Python 3.11, `uv`, Terraform `1.16.1`, Azure CLI, Docker for
 hosted image builds, and an Azure account with resource and role-assignment
 permissions.
 
 ```bash
 az login
 uv sync --dev
+export TF_VAR_subscription_id="$(az account show --query id -o tsv)"
+export TF_VAR_operator_object_ids="[\"$(az ad signed-in-user show --query id -o tsv)\"]"
 terraform -chdir=infra init
 terraform -chdir=infra apply -var-file=env/dev.tfvars
 ```
+
+State is remote; `init` requires the backend described in
+[Setup](docs/Setup.md#remote-state) to exist.
 
 Export the project endpoint and model deployment:
 
@@ -83,6 +88,7 @@ uv run pytest -q
 
 ## Current Scope
 
-This is a local demo and reference implementation, not a production baseline.
-Remote Terraform state, production-grade environment isolation and writer
-restrictions, and managed evaluation gates remain roadmap items.
+This is a demo and reference implementation, not a production baseline.
+Terraform runs on remote state with plan on pull requests and apply on `main`,
+but production-grade environment isolation and writer restrictions, and managed
+evaluation gates, remain roadmap items.
