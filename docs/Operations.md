@@ -173,7 +173,9 @@ Each record includes:
 - Cutover outcome
 
 The same definition hash, hosted image evidence, and audit identifiers are
-attached to Foundry version metadata. A failed record retains the last
+attached to Foundry version metadata. Foundry accepts at most 16 metadata
+entries per version, so toolbox and skill dependencies are attached as compact
+`name@version` values; the deployment record keeps the expanded fields. A failed record retains the last
 operational phase reached and uses `status: failed` plus `failure_message` to
 describe the outcome. Prompts and response bodies are not written to deployment
 records.

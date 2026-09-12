@@ -92,3 +92,14 @@ variable "model_capacity" {
     error_message = "model_capacity must be a positive integer."
   }
 }
+
+variable "github_oidc_subject_prefix" {
+  description = "Subject claim prefix GitHub presents for this repository. Leave null while the repository emits mutable owner/name subjects. Set it to the exact `sub_claim_prefix` reported by `gh api repos/<owner>/<name>/actions/oidc/customization/sub` once immutable subject claims are enabled."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.github_oidc_subject_prefix == null || can(regex("^repo:[^:]+$", var.github_oidc_subject_prefix))
+    error_message = "github_oidc_subject_prefix must look like \"repo:<owner>@<owner_id>/<name>@<repo_id>\"."
+  }
+}

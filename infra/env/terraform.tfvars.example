@@ -8,3 +8,7 @@
 # model_capacity  = 10
 # github_repository       = "octo-org/foundry-demo"
 # github_environment_name = "dev"
+# Only required when the repository emits immutable OIDC subject claims.
+# Read the exact value from:
+#   gh api repos/<owner>/<name>/actions/oidc/customization/sub --jq .sub_claim_prefix
+# github_oidc_subject_prefix = "repo:octo-org@1234567/foundry-demo@7654321"

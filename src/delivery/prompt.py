@@ -9,7 +9,7 @@ from azure.ai.projects.models import PromptAgentDefinition
 from foundry_demo.agents import PromptAgentSpec, RegisteredAgentSpec
 from foundry_demo.agents.common.base import AgentSpecError
 from foundry_demo.delivery.config import DeploymentConfig
-from foundry_demo.delivery.contracts import Candidate
+from foundry_demo.delivery.contracts import Candidate, enforce_metadata_limit
 
 
 class CandidateVersionError(RuntimeError):
@@ -58,7 +58,9 @@ class PromptAgentOperations:
         version = project.agents.create_version(
             agent_name=spec.name,
             definition=definition,
-            metadata={**metadata, "artifact_sha256": digest, "definition_sha256": digest},
+            metadata=enforce_metadata_limit(
+                {**metadata, "definition_sha256": digest}, subject=spec.name
+            ),
             description=spec.description,
         )
         raw = getattr(version, "version", None) or getattr(version, "id", None)

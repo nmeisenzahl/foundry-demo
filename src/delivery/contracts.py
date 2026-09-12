@@ -6,6 +6,25 @@ from typing import Any, Protocol
 from foundry_demo.agents import RegisteredAgentSpec
 from foundry_demo.delivery.config import DeploymentConfig
 
+# Foundry rejects a version whose metadata carries more entries than this, so every
+# adapter keeps its payload compact and asserts the budget before calling the SDK.
+FOUNDRY_METADATA_MAX_ENTRIES = 16
+
+
+class MetadataLimitError(ValueError):
+    """Raised when version metadata would exceed the Foundry entry cap."""
+
+
+def enforce_metadata_limit(metadata: dict[str, str], *, subject: str) -> dict[str, str]:
+    """Fail with the offending keys instead of an opaque Foundry `invalid_payload`."""
+    if len(metadata) > FOUNDRY_METADATA_MAX_ENTRIES:
+        keys = ", ".join(sorted(metadata))
+        raise MetadataLimitError(
+            f"Version metadata for {subject!r} has {len(metadata)} entries but Foundry "
+            f"accepts at most {FOUNDRY_METADATA_MAX_ENTRIES}: {keys}"
+        )
+    return metadata
+
 
 @dataclass(frozen=True)
 class Candidate:

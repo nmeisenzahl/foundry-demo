@@ -7,7 +7,12 @@ from azure.ai.projects.models import AgentVersionStatus
 
 from foundry_demo.agents.architecture_advisor import ARCHITECTURE_ADVISOR_SPEC
 from foundry_demo.delivery.config import DeploymentConfig
-from foundry_demo.delivery.contracts import Candidate
+from foundry_demo.delivery.contracts import (
+    FOUNDRY_METADATA_MAX_ENTRIES,
+    Candidate,
+    MetadataLimitError,
+    enforce_metadata_limit,
+)
 from foundry_demo.delivery.hosted import (
     HostedAgentOperations,
     HostedReadinessError,
@@ -56,14 +61,49 @@ def test_create_hosted_candidate():
     assert candidate.image_reference == definition.container_configuration.image
     assert candidate.image_digest == "sha256:" + "a" * 64
     assert metadata["definition_sha256"] == candidate.artifact_sha256
-    assert metadata["artifact_sha256"] == candidate.artifact_sha256
     assert metadata["image_reference"] == candidate.image_reference
     assert metadata["image_digest"] == candidate.image_digest
-    assert metadata["toolbox_version"] == "2"
+    assert metadata["skill"] == "architecture-decision-brief@1"
+    assert metadata["toolbox"] == "architecture-advisor-toolbox@2"
     assert definition.protocol_versions[0].version == "2.0.0"
     assert definition.environment_variables["AZURE_AI_MODEL_DEPLOYMENT_NAME"] == "model"
     assert definition.environment_variables["AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING"] == "true"
     assert definition.environment_variables["TOOLBOX_ENDPOINT"] == candidate.toolbox_endpoint
+
+
+def test_hosted_version_metadata_fits_foundry_limit():
+    project = MagicMock()
+    project.agents.create_version.return_value = SimpleNamespace(version="7", status="creating")
+    project.beta.skills.create_from_files.return_value = SimpleNamespace(version="1")
+    project.toolboxes.create_version.return_value = SimpleNamespace(version="2")
+    full_audit_metadata = {
+        "deployment_id": "d",
+        "git_sha": "abc123",
+        "repository": "org/repo",
+        "run_id": "42",
+        "run_attempt": "3",
+        "workflow_url": "https://github.com/org/repo/actions/runs/42",
+        "git_dirty": "false",
+    }
+
+    HostedAgentOperations().create_candidate(
+        project, ARCHITECTURE_ADVISOR_SPEC, config(), full_audit_metadata
+    )
+
+    metadata = project.agents.create_version.call_args.kwargs["metadata"]
+    toolbox_metadata = project.toolboxes.create_version.call_args.kwargs["metadata"]
+    assert len(metadata) <= FOUNDRY_METADATA_MAX_ENTRIES
+    assert len(toolbox_metadata) <= FOUNDRY_METADATA_MAX_ENTRIES
+
+
+def test_enforce_metadata_limit_reports_offending_keys():
+    oversized = {f"key_{index}": "value" for index in range(FOUNDRY_METADATA_MAX_ENTRIES + 1)}
+
+    with pytest.raises(MetadataLimitError) as excinfo:
+        enforce_metadata_limit(oversized, subject="architecture-advisor")
+
+    assert "architecture-advisor" in str(excinfo.value)
+    assert "key_0" in str(excinfo.value)
 
 
 def test_create_hosted_candidate_honors_model_override():

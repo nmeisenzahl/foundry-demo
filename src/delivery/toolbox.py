@@ -20,6 +20,7 @@ from foundry_demo.agents.architecture_advisor.toolbox_endpoint import (
     validate_toolbox_endpoint,
 )
 from foundry_demo.agents.common.base import ToolboxSpec
+from foundry_demo.delivery.contracts import enforce_metadata_limit
 from foundry_demo.delivery.prompt import CandidateVersionError
 
 
@@ -139,7 +140,7 @@ def create_toolbox_candidate(
         description="Microsoft Learn tools and architecture decision skill.",
         tools=mcp_tools,
         skills=skills_refs,
-        metadata=metadata,
+        metadata=enforce_metadata_limit(metadata, subject=toolbox_spec.name),
     )
     raw_toolbox_version = getattr(created_toolbox, "version", None) or getattr(
         created_toolbox, "id", None

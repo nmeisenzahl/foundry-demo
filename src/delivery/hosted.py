@@ -17,7 +17,7 @@ from azure.ai.projects.models import (
 from foundry_demo.agents import HostedAgentSpec, RegisteredAgentSpec
 from foundry_demo.agents.common.base import AgentSpecError
 from foundry_demo.delivery.config import DeploymentConfig
-from foundry_demo.delivery.contracts import Candidate
+from foundry_demo.delivery.contracts import Candidate, enforce_metadata_limit
 from foundry_demo.delivery.prompt import CandidateVersionError
 from foundry_demo.delivery.toolbox import create_toolbox_candidate
 
@@ -101,9 +101,11 @@ class HostedAgentOperations:
         definition_digest = hashlib.sha256(
             json.dumps(serialized, sort_keys=True, separators=(",", ":"), default=str).encode()
         ).hexdigest()
+        # Foundry caps version metadata at FOUNDRY_METADATA_MAX_ENTRIES entries, so
+        # dependency names and versions travel as single `name@version` values. The
+        # deployment record keeps the fully expanded provenance.
         version_metadata = {
             **metadata,
-            "artifact_sha256": definition_digest,
             "definition_sha256": definition_digest,
             "image_digest": image.digest,
             "image_reference": immutable_image,
@@ -111,19 +113,17 @@ class HostedAgentOperations:
         if toolbox_cand is not None:
             version_metadata.update(
                 {
-                    "skill_name": toolbox_cand.skill_name,
-                    "skill_version": toolbox_cand.skill_version,
+                    "skill": f"{toolbox_cand.skill_name}@{toolbox_cand.skill_version}",
                     "skill_sha256": toolbox_cand.skill_sha256,
-                    "toolbox_name": toolbox_cand.toolbox_name,
-                    "toolbox_version": toolbox_cand.toolbox_version,
-                    "toolbox_endpoint": toolbox_cand.toolbox_endpoint,
+                    "toolbox": f"{toolbox_cand.toolbox_name}@{toolbox_cand.toolbox_version}",
                     "toolbox_sha256": toolbox_cand.toolbox_sha256,
+                    "toolbox_endpoint": toolbox_cand.toolbox_endpoint,
                 }
             )
         created = project.agents.create_version(
             agent_name=spec.name,
             definition=definition,
-            metadata=version_metadata,
+            metadata=enforce_metadata_limit(version_metadata, subject=spec.name),
             description=spec.description,
         )
         raw = getattr(created, "version", None) or getattr(created, "id", None)
