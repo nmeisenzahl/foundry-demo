@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv@sha256:a19035b77e3ba952fe48e88ff93d160853d8b2abeccc1a19571573fdb1fa78aa AS uv
+FROM ghcr.io/astral-sh/uv@sha256:b485bd65cc2cf1c9a93b3554012c9c3778cf7b1b5fd3d3096ce9e1226c97e1e6 AS uv
 FROM python@sha256:e06cc1111ed84189e91866447f562b89faadbfbbb9937cd67e6bf4172cdb45df
 
 ENV PYTHONUNBUFFERED=1 \
