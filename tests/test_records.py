@@ -79,8 +79,11 @@ def test_recorder_success_record_shape(tmp_path: Path) -> None:
     assert list(records_dir.glob("*.tmp*")) == []
 
     content = json.loads(recorder.record_path.read_text(encoding="utf-8"))
-    assert content["schema_version"] == "4"
+    assert content["schema_version"] == "5"
     assert content["agent_name"] == "research-assistant"
+    # Recorded but never set by this test, so it must serialize as null rather
+    # than vanish -- consumers read the key unconditionally.
+    assert content["model_deployment_name"] is None
     assert content["project_endpoint"] == (
         "https://example.services.ai.azure.com/api/projects/example-dev"
     )

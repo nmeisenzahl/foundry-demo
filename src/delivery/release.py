@@ -144,6 +144,9 @@ def deploy_release(
     agents = project.agents
     recorder.set_project_endpoint(config.project_endpoint)
     recorder.set_agent_kind(spec.kind.value)
+    # Resolved before the first Foundry call, so a malformed connected-model
+    # reference fails as configuration rather than as a dangling candidate.
+    recorder.set_model_deployment_name(config.resolve_model_deployment_name(spec))
     recorder.set_phase(DeploymentPhase.resolving_current)
     route = resolve_current_route(agents, agent_name=spec.name)
     recorder.set_previous_active_version(route.previous_active_version)

@@ -15,7 +15,16 @@ locals {
     github_agent_delivery           = "${var.project_name}-dev-gh-delivery"
     architecture_advisor_repository = "architecture-advisor"
     incident_triage_repository      = "incident-triage"
+    token_control_connection        = "${var.project_name}-token-control"
   }
+
+  # The single string a connected-model prompt agent needs. Foundry rejects
+  # anything but "<connection-name>/<model-name>".
+  connected_model_deployment_name = (
+    var.token_control == null
+    ? ""
+    : "${local.names.token_control_connection}/${var.token_control.deployment_name}"
+  )
 
   # Repositories with immutable subject claims present
   # repo:<owner>@<owner_id>/<name>@<repo_id> instead of repo:<owner>/<name>, so the
@@ -24,13 +33,14 @@ locals {
   github_oidc_subject        = "${local.github_oidc_subject_prefix}:environment:${var.github_environment_name}"
 
   github_actions_environment_variables = {
-    AZURE_SUBSCRIPTION_ID          = data.azurerm_client_config.current.subscription_id
-    AZURE_TENANT_ID                = data.azurerm_client_config.current.tenant_id
-    AZURE_AGENT_DELIVERY_CLIENT_ID = azurerm_user_assigned_identity.github_agent_delivery.client_id
-    FOUNDRY_PROJECT_ENDPOINT       = azurerm_cognitive_account_project.main.endpoints["AI Foundry API"]
-    FOUNDRY_MODEL_DEPLOYMENT_NAME  = azurerm_cognitive_deployment.chat.name
-    ACR_NAME                       = azurerm_container_registry.main.name
-    ACR_LOGIN_SERVER               = azurerm_container_registry.main.login_server
+    AZURE_SUBSCRIPTION_ID                   = data.azurerm_client_config.current.subscription_id
+    AZURE_TENANT_ID                         = data.azurerm_client_config.current.tenant_id
+    AZURE_AGENT_DELIVERY_CLIENT_ID          = azurerm_user_assigned_identity.github_agent_delivery.client_id
+    FOUNDRY_PROJECT_ENDPOINT                = azurerm_cognitive_account_project.main.endpoints["AI Foundry API"]
+    FOUNDRY_MODEL_DEPLOYMENT_NAME           = azurerm_cognitive_deployment.chat.name
+    FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME = local.connected_model_deployment_name
+    ACR_NAME                                = azurerm_container_registry.main.name
+    ACR_LOGIN_SERVER                        = azurerm_container_registry.main.login_server
   }
 
   github_actions_repository_variables = {

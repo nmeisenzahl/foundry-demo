@@ -97,6 +97,72 @@ returns `403`, wait for propagation and run the apply again.
 Public networking is enabled for this demo. It is not intended as a general
 production default.
 
+### Token Control Model Gateway
+
+The `release-notes-writer` demo runs on an admin-connected model rather than
+the model deployment above. Terraform creates a Foundry `ModelGateway`
+connection whose target is [Token Control](https://tokencontrol.ai/), and the
+agent addresses the model through it. Configure it with the `token_control`
+object variable in `infra/env/dev.tfvars`:
+
+```hcl
+token_control = {
+  # Gateway base URL with no trailing slash. Foundry appends
+  # /chat/completions to it and puts the model in the request body.
+  base_url        = "https://<host>/api/v1/openai"
+  # The deployment name Token Control routes on. Must not contain "/": it is
+  # the second half of the "<connection>/<model>" reference agents use.
+  deployment_name = "gpt-5.2"
+  # The underlying model and version, shown in the Foundry model picker.
+  model_name    = "gpt-5.2"
+  model_version = "2025-12-11"
+}
+```
+
+Token Control serves the **OpenAI v1 shape**, so the two dialect fields keep
+their defaults: `deployment_in_path = false` and an empty
+`inference_api_version`. The Azure OpenAI deployment-path shape is not
+available on this gateway — `/deployments/{name}/chat/completions` answers
+`Error Code: 10034, This functionality is not supported` — and an
+`inference_api_version` without `deployment_in_path` is rejected at plan time
+so the two cannot drift apart. Set both only for a gateway that genuinely
+serves the Azure shape.
+
+The key travels in an `api-key` header, which is Foundry's default for a
+ModelGateway connection, so no custom `authConfig` is required.
+
+Model discovery is static because it has to be: the gateway answers `405` on
+every model-listing route, so there is nothing for Foundry to discover. Each
+model an agent may use must appear in `token_control` explicitly.
+
+The API key is a secret and never belongs in a tfvars file. Locally, export it:
+
+```bash
+export TF_VAR_token_control_api_key="<token control api key>"
+```
+
+In GitHub Actions it is injected from the `TOKEN_CONTROL_API_KEY` secret on the
+`dev` Environment. Terraform validates that the two are set together: a
+`token_control` block without a key fails at plan time rather than producing a
+connection that cannot authenticate.
+
+Leaving `token_control` unset is supported and keeps `terraform apply` working,
+but it does not keep CI green — `release-notes-writer` is registered
+unconditionally, so its deployment then fails with a configuration error.
+
+After applying, the connection appears in the Foundry portal under **Manage** → **Resource details** →
+**Admin-connected models**, and the reference agents use
+is:
+
+```bash
+terraform -chdir=infra output -raw connected_model_deployment_name
+```
+
+The connection uses the preview API version `2025-04-01-preview` with
+`schema_validation_enabled = false`, because the `ModelGateway` category is not
+in the provider's embedded schema. The service, not the provider, validates the
+body.
+
 ## Remote State
 
 Terraform state lives in Azure Blob Storage with Entra ID authentication and
@@ -233,15 +299,21 @@ returned in `github_actions_environment_variables` as an **Environment
 variable** (repository **Settings > Environments > dev > Variables**). Do not
 store these values as secrets.
 
-The seven Environment variable names returned by Terraform are:
+The eight Environment variable names returned by Terraform are:
 
 - `AZURE_SUBSCRIPTION_ID`
 - `AZURE_TENANT_ID`
 - `AZURE_AGENT_DELIVERY_CLIENT_ID`
 - `FOUNDRY_PROJECT_ENDPOINT`
 - `FOUNDRY_MODEL_DEPLOYMENT_NAME`
+- `FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME`
 - `ACR_NAME`
 - `ACR_LOGIN_SERVER`
+
+`FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME` is empty unless the
+[Token Control model gateway](#token-control-model-gateway) is configured.
+While it is empty, deploying `release-notes-writer` fails with a configuration
+error naming it.
 
 Two further `dev` Environment variables are set by hand, because Terraform
 cannot produce them. `AZURE_TERRAFORM_CLIENT_ID` identifies the principal
@@ -258,6 +330,19 @@ az ad signed-in-user show --query id -o tsv
 | --- | --- |
 | `AZURE_TERRAFORM_CLIENT_ID` | `appId` of `foundrydemo-dev-tf` |
 | `AZURE_OPERATOR_OBJECT_IDS` | JSON array, for example `["<object-id>"]` |
+
+### Environment Secrets
+
+Secrets, unlike the variables above, are stored as **Environment secrets**
+(**Settings > Environments > dev > Secrets**). The Terraform workflow reads
+them into `TF_VAR_*` for both the plan and apply jobs.
+
+| Secret | Used for |
+| --- | --- |
+| `TOKEN_CONTROL_API_KEY` | `TF_VAR_token_control_api_key`, the credential on the Token Control model-gateway connection |
+
+Omit it only if `token_control` is also unset in `infra/env/dev.tfvars`;
+Terraform rejects one without the other.
 
 Do not add a deployment branch restriction to `dev`. The Terraform plan job
 runs from pull request branches and declares `environment: dev` to obtain its
@@ -288,6 +373,24 @@ export FOUNDRY_MODEL_DEPLOYMENT_NAME="$(
   terraform -chdir=infra output -raw model_deployment_name
 )"
 ```
+
+Agents on an admin-connected model need one more variable. It overrides
+`FOUNDRY_MODEL_DEPLOYMENT_NAME` for those agents only, and is ignored by every
+other agent:
+
+```bash
+export FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME="$(
+  terraform -chdir=infra output -raw connected_model_deployment_name
+)"
+uv run deploy-agent release-notes-writer
+```
+
+Note what is *not* needed here: the Token Control API key. Only Terraform ever
+handles it, when it creates the connection. Foundry holds the credential and
+calls the gateway on the agent's behalf, so the delivery CLI — locally and in
+CI — needs nothing more than this connection reference. That is the property
+that makes the gateway a control plane rather than another secret to
+distribute.
 
 Optional settings:
 
@@ -348,7 +451,16 @@ plan published to a job summary exposes resource IDs, the Foundry endpoint,
 and the registry login server, all of which are already published as `dev`
 Environment variables. Terraform renders sensitive attributes as
 `(sensitive value)`, and `local_auth_enabled = false` keeps account keys out
-of state entirely.
+of state entirely. Terraform outputs are deliberately not published to job
+summaries.
+
+The Token Control API key is the one third-party credential this stack holds.
+It is passed as `sensitive_body` on the connection resource, which keeps it out
+of plan output and job summaries — but **not** out of Terraform state. Read
+access to the state container is therefore equivalent to holding the key, and
+the container is RBAC-only for that reason. Rotating the key means rotating it
+in Token Control, updating the `TOKEN_CONTROL_API_KEY` secret on the `dev`
+Environment, and re-applying.
 
 ## Cleanup
 

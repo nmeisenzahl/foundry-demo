@@ -34,6 +34,7 @@ packages = [
   "foundry_demo.agents.research_assistant",
   "foundry_demo.agents.architecture_advisor",
   "foundry_demo.agents.incident_triage",
+  "foundry_demo.agents.release_notes_writer",
   "foundry_demo.delivery",
 ]
 package-dir = { foundry_demo = "src" }

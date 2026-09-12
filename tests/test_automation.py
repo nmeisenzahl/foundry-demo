@@ -67,7 +67,9 @@ def test_select_agents_supports_all_single_and_comma_separated() -> None:
     assert tuple(
         agent.name
         for agent in select_agents(
-            config, "research-assistant, architecture-advisor, incident-triage"
+            config,
+            "research-assistant, architecture-advisor, incident-triage, "
+            "release-notes-writer",
         )
     ) == tuple(list_agents())
 
@@ -180,6 +182,17 @@ def test_render_matrix_returns_compact_registry_sorted_json() -> None:
             "image_repository": "incident-triage",
             "image_reference_env": "FOUNDRY_INCIDENT_TRIAGE_IMAGE",
             "image_digest_env": "FOUNDRY_INCIDENT_TRIAGE_IMAGE_DIGEST",
+        },
+        {
+            "agent_name": "release-notes-writer",
+            "agent_kind": "prompt",
+            "environment": "dev",
+            "github_environment": "dev",
+            "artifact_retention_days": 90,
+            "image_context": "",
+            "image_repository": "",
+            "image_reference_env": "",
+            "image_digest_env": "",
         },
         {
             "agent_name": "research-assistant",

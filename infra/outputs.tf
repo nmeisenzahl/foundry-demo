@@ -63,8 +63,13 @@ output "incident_triage_repository" {
   value       = local.names.incident_triage_repository
 }
 
+output "connected_model_deployment_name" {
+  description = "Admin-connected model reference in '<connection>/<model>' form, or empty when Token Control is not configured."
+  value       = local.connected_model_deployment_name
+}
+
 output "github_actions_environment_variables" {
-  description = "Seven non-sensitive GitHub Environment variables for deployment authentication and runtime configuration."
+  description = "Eight non-sensitive GitHub Environment variables for deployment authentication and runtime configuration."
   value       = local.github_actions_environment_variables
 }
 

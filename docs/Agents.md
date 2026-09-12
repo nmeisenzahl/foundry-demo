@@ -12,6 +12,7 @@ src/agents/
   research_assistant/    # Prompt agent definition, tools, and instructions
   architecture_advisor/  # Hosted runtime, definition, Toolbox spec, Dockerfile, and lockfile
   incident_triage/       # Flock blackboard runtime, definition, Dockerfile, and lockfile
+  release_notes_writer/  # Prompt agent on an admin-connected (Token Control) model
   registry.py            # Discovers packages through their AGENT_SPEC export
   __init__.py            # Public agent contracts and registry API
 ```
@@ -97,10 +98,14 @@ Custom validators can inspect:
 - `output_item_counts`
 - `completed_output_item_counts`
 - `annotation_counts`
+- `completed_tool_name_counts`
+- `source_domain_counts`
 
 The `research-assistant` requires a completed `web_search_call` and a
-`url_citation` annotation. This keeps agent-specific acceptance logic out of
-the shared delivery orchestrator.
+`url_citation` annotation. The `release-notes-writer` requires the opposite:
+a message and no completed tool call at all, because a connected model cannot
+serve the hosted tools. This keeps agent-specific acceptance logic out of the
+shared delivery orchestrator.
 
 ## Deploy the Hosted Agent
 
@@ -309,6 +314,69 @@ forces the newer runtime through `[tool.uv] override-dependencies` rather than
 forking either dependency. `googleapis-common-protos` is overridden for the same
 reason: `flock-core`'s deprecated Jaeger exporter caps it below what the OTLP
 exporter needs, and nothing here exports to Jaeger.
+
+## Deploy the Connected-Model Prompt Agent
+
+The `release-notes-writer` agent does not run on the Terraform-deployed Azure
+OpenAI model the other three agents share. It runs on an **admin-connected
+model**: a Foundry `ModelGateway` connection whose target is
+[Token Control](https://tokencontrol.ai/), where every inference request is
+priced, budgeted, rate-limited, and audited before it reaches a model.
+
+Microsoft calls this *bring your own model*. Two constraints follow from it,
+and both shape the agent:
+
+- **Prompt agents only.** Foundry does not support connected models for hosted
+  agents, so this demo cannot be a container.
+- **Most tools are unavailable.** Web Search, Bing grounding, SharePoint,
+  Memory Search, Browser Automation, and Microsoft Fabric all refuse to run
+  against a connected model. `release-notes-writer` therefore declares no tools
+  at all, and its smoke run asserts that none were called.
+
+### Model Reference
+
+A connected model is addressed as `<connection-name>/<model-name>`, not as a
+deployment name. Terraform owns both halves and composes them:
+
+```bash
+terraform -chdir=infra output -raw connected_model_deployment_name
+# foundrydemo-token-control/gpt-5.2
+```
+
+The spec declares `connected_model_env_var="FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME"`,
+so for this agent that variable takes precedence over
+`FOUNDRY_MODEL_DEPLOYMENT_NAME`. Every other agent ignores it.
+
+`DeploymentConfig.get_connected_model` validates the shape before the first
+Foundry call. Foundry itself reports a bad reference as `model not found` only
+at invocation time, once a candidate version already exists; failing on the
+configuration instead keeps that dangling version from being created.
+
+### Deploy
+
+```bash
+export FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME="$(
+  terraform -chdir=infra output -raw connected_model_deployment_name
+)"
+uv run deploy-agent release-notes-writer
+```
+
+The release path is identical to every other agent: immutable candidate
+version, invoke that exact version, validate, then move traffic.
+
+### Telling a Connected Deployment Apart
+
+Deployment records carry `model_deployment_name`, which is the only place the
+governed path is visible in this repository's own artifacts:
+
+```json
+{ "agent_name": "research-assistant",   "model_deployment_name": "foundrydemo-chat-model" }
+{ "agent_name": "release-notes-writer", "model_deployment_name": "foundrydemo-token-control/gpt-5.2" }
+```
+
+It is a resource name, not a secret: no endpoint and no credential. The request
+itself is visible in the Token Control dashboard, which is where the demo's
+actual claim is verified.
 
 ## Hosted Local Development
 

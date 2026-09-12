@@ -37,7 +37,7 @@ def build_definition(
     immutable_image: str,
     toolbox_endpoint: str | None = None,
 ) -> HostedAgentDefinition:
-    model = (spec.model_deployment_name or config.model_deployment_name).strip()
+    model = config.resolve_model_deployment_name(spec)
     if not model:
         raise AgentSpecError("Model deployment name is required and cannot be blank.")
     env_vars = {

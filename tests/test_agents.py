@@ -75,7 +75,7 @@ def test_research_assistant_smoke_validation() -> None:
 def test_build_definition_without_temperature() -> None:
     definition = build_definition(
         RESEARCH_ASSISTANT_SPEC,
-        default_model="example-model",
+        model="example-model",
         temperature=None,
     )
 
@@ -90,7 +90,7 @@ def test_build_definition_without_temperature() -> None:
 def test_build_definition_with_temperature() -> None:
     definition = build_definition(
         RESEARCH_ASSISTANT_SPEC,
-        default_model="example-model",
+        model="example-model",
         temperature=0.3,
     )
 
@@ -100,7 +100,11 @@ def test_build_definition_with_temperature() -> None:
         assert definition.as_dict().get("temperature") == pytest.approx(0.3)
 
 
-def test_build_definition_spec_model_override() -> None:
+def test_build_definition_uses_the_supplied_model() -> None:
+    # Precedence between a spec override, an admin-connected model, and the
+    # Terraform default belongs to DeploymentConfig.resolve_model_deployment_name
+    # (see tests/test_connected_model.py). build_definition takes the resolved
+    # value and uses it verbatim.
     custom_spec = PromptAgentSpec(
         name="custom-agent",
         description="Custom",
@@ -109,8 +113,8 @@ def test_build_definition_spec_model_override() -> None:
         smoke_prompt="Hello",
         model_deployment_name="override-model",
     )
-    definition = build_definition(custom_spec, default_model="default-model")
-    assert definition.model == "override-model"
+    definition = build_definition(custom_spec, model="resolved-model")
+    assert definition.model == "resolved-model"
 
 
 def test_build_definition_blank_model_raises() -> None:
@@ -122,7 +126,7 @@ def test_build_definition_blank_model_raises() -> None:
         smoke_prompt="Hello",
     )
     with pytest.raises(AgentSpecError, match="Model deployment name"):
-        build_definition(custom_spec, default_model="  ")
+        build_definition(custom_spec, model="  ")
 
 
 def test_build_definition_blank_instructions_raises() -> None:
@@ -134,7 +138,7 @@ def test_build_definition_blank_instructions_raises() -> None:
         smoke_prompt="Hello",
     )
     with pytest.raises(AgentSpecError, match="instructions cannot be empty"):
-        build_definition(custom_spec, default_model="default-model")
+        build_definition(custom_spec, model="default-model")
 
 
 def test_base_agent_spec_inheritance() -> None:

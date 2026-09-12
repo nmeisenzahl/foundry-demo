@@ -40,6 +40,9 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_operator_object_ids: ${{ vars.AZURE_OPERATOR_OBJECT_IDS }}
+      # Token Control gateway credential for the admin-connected model. Held as
+      # a secret on the dev GitHub Environment, never in a tracked tfvars file.
+      TF_VAR_token_control_api_key: ${{ secrets.TOKEN_CONTROL_API_KEY }}
       TF_IN_AUTOMATION: "true"
       SUMMARY_LIMIT: "60000"
     steps:
@@ -59,17 +62,22 @@ jobs:
 
       - name: Terraform plan
         run: |
+          set -o pipefail
+          # Output values are stripped from the run log. This repository is
+          # public and so are its logs; outputs live in state and are read
+          # with `terraform output` by an operator.
           terraform -chdir=infra plan \
             -input=false \
             -lock-timeout=5m \
             -var-file=env/dev.tfvars \
-            -out=tfplan
+            -out=tfplan | sed '/^Changes to Outputs:$/,$d'
 
       - name: Publish plan to job summary
         run: |
           set -eu
           plan_text="${RUNNER_TEMP}/plan.txt"
-          terraform -chdir=infra show -no-color tfplan > "$plan_text"
+          terraform -chdir=infra show -no-color tfplan \
+            | sed '/^Changes to Outputs:$/,$d' > "$plan_text"
           size="$(wc -c < "$plan_text")"
           {
             printf '## Terraform plan (dev)\n\n'
@@ -100,8 +108,10 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_operator_object_ids: ${{ vars.AZURE_OPERATOR_OBJECT_IDS }}
+      # Token Control gateway credential for the admin-connected model. Held as
+      # a secret on the dev GitHub Environment, never in a tracked tfvars file.
+      TF_VAR_token_control_api_key: ${{ secrets.TOKEN_CONTROL_API_KEY }}
       TF_IN_AUTOMATION: "true"
-      SUMMARY_LIMIT: "60000"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -119,21 +129,26 @@ jobs:
 
       - name: Terraform plan
         run: |
+          set -o pipefail
+          # Output values are stripped from the run log. This repository is
+          # public and so are its logs; outputs live in state and are read
+          # with `terraform output` by an operator.
           terraform -chdir=infra plan \
             -input=false \
             -lock-timeout=5m \
             -var-file=env/dev.tfvars \
-            -out=tfplan
+            -out=tfplan | sed '/^Changes to Outputs:$/,$d'
 
       # Applying the saved plan rather than re-planning guarantees the applied
       # change is exactly the one just rendered above.
       - name: Terraform apply
         run: |
+          set -o pipefail
           terraform -chdir=infra apply \
             -input=false \
             -lock-timeout=5m \
             -auto-approve \
-            tfplan
+            tfplan | sed '/^Outputs:$/,$d'
 
       - name: Publish apply result to job summary
         if: always()
@@ -147,17 +162,10 @@ jobs:
             printf '## Terraform apply (dev)\n\n'
             printf -- '- Commit: %s%s%s\n' "$tick" "$GITHUB_SHA" "$tick"
             printf -- '- Result: %s%s%s\n\n' "$tick" "$JOB_STATUS" "$tick"
-          } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$JOB_STATUS" != "success" ]; then
-            exit 0
-          fi
-          outputs_text="${RUNNER_TEMP}/outputs.txt"
-          terraform -chdir=infra output -no-color > "$outputs_text"
-          {
-            printf '<details><summary>Outputs</summary>\n\n'
-            printf '```text\n'
-            head -c "$SUMMARY_LIMIT" "$outputs_text"
-            printf '\n```\n\n</details>\n'
+            # Outputs are deliberately not published here: they belong in
+            # Terraform state, not in the run's logs and summary.
+            printf -- '- Outputs: read with %sterraform output%s\n' \
+              "$tick" "$tick"
           } >> "$GITHUB_STEP_SUMMARY"
         env:
           JOB_STATUS: ${{ job.status }}

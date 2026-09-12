@@ -366,6 +366,64 @@ The hosted agent container authenticates to the Toolbox endpoint using its manag
 2. In the initial bootstrap deployment, the hosted service principal is created only after version 1 is registered; assign the role and redeploy.
 3. Delivery retries 401/403 smoke failures three times; allow several minutes for Azure RBAC propagation before redeploying if those retries are exhausted.
 
+### Connected Model Failures
+
+`release-notes-writer` runs on an admin-connected model whose inference leaves
+Azure through [Token Control](https://tokencontrol.ai/). Four failures are
+specific to that path.
+
+**`model not found` during smoke.** Foundry accepts only
+`<connection-name>/<model-name>` for a connected model. Either
+`FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME` is not in that form, or the model is
+not in the connection's static `models` list. Compare the two:
+
+```bash
+terraform -chdir=infra output -raw connected_model_deployment_name
+```
+
+against the Foundry portal, **Manage** → **Resource details** →
+**Admin-connected models**. A locally malformed value never reaches Foundry:
+`DeploymentConfig.get_connected_model` rejects it as a `ConfigurationError`
+before the first API call, so a `model not found` means the reference is
+well-formed but wrong.
+
+**`401` or `403` during smoke.** Token Control rejected the key on the
+connection. Rotate `TF_VAR_token_control_api_key` (locally) or the
+`TOKEN_CONTROL_API_KEY` secret on the `dev` Environment, and re-apply
+Terraform. This is distinct from the hosted-agent 401/403 above, which is an
+Entra RBAC problem inside Azure; nothing here involves a managed identity.
+
+**A budget or TPM limit stopped the request.** Token Control refuses requests
+that would exceed a configured budget or rate limit, and the smoke run fails as
+a result. **This is Token Control working as designed, not a broken
+deployment.** Check the Token Control dashboard before changing anything in
+Foundry or Terraform.
+
+**The connection shows `Inactive`, or apply is rejected.** The connection uses
+the preview API version `2025-04-01-preview`, and `schema_validation_enabled`
+is off because the `ModelGateway` category is absent from the provider's
+embedded schema. A drifted contract therefore surfaces as a service-side
+rejection at apply or inference time, not as a provider warning. Verify the
+gateway directly before suspecting Foundry:
+
+```bash
+curl -sS -X POST "${BASE_URL}/chat/completions" \
+  -H "Content-Type: application/json" \
+  -H "api-key: ${TOKEN_CONTROL_API_KEY}" \
+  -d '{"model":"gpt-5.2","messages":[{"role":"user","content":"ok"}],
+       "max_completion_tokens":16}'
+```
+
+`BASE_URL` is the `base_url` from `token_control`, including its
+`/api/v1/openai` path. A `404` here usually means the path was truncated to the
+bare host; `Error Code: 10034` means the request used the Azure OpenAI
+deployment-path shape, which this gateway does not serve.
+
+In every case the release policy holds: the candidate exists as an inactive
+version, and the endpoint keeps serving the previous one. The deployment
+record's `model_deployment_name` field shows which model the failed attempt
+targeted.
+
 ### Failure Recovery
 
 If Skill or Toolbox candidate creation fails:

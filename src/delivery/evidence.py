@@ -285,7 +285,7 @@ def _parse_job_evidence_payload(payload: Mapping[str, Any], path: Path) -> JobEv
 def _looks_like_deployment_record(payload: Mapping[str, Any]) -> bool:
     schema = payload.get("schema_version")
     return (
-        schema in {"3", "4"}
+        schema in {"3", "4", "5"}
         and isinstance(payload.get("deployment_id"), str)
         and isinstance(payload.get("agent_name"), str)
     )

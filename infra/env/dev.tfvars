@@ -24,3 +24,17 @@ hosted_agent_object_ids = {
   "architecture-advisor" = "67b83d63-285a-473d-9cb1-2d4d096de400"
   "incident-triage"      = "df0e72ef-f65d-4398-98ed-39870cc7e91a"
 }
+
+# Token Control model gateway for the release-notes-writer demo.
+
+# The matching API key is a secret and stays out of this file:
+#   export TF_VAR_token_control_api_key="..."
+# In CI it comes from the TOKEN_CONTROL_API_KEY secret on the dev Environment.
+token_control = {
+  base_url        = "https://ca-wd-prod-cc.purplebush-81621a18.germanywestcentral.azurecontainerapps.io/api/v1/openai"
+  deployment_name = "gpt-5.2"
+  model_name      = "gpt-5.2"
+  # Descriptive only: the gateway reports gpt-5.2-2025-12-11 for this model.
+  # Foundry routes on deployment_name, not on this field.
+  model_version = "2025-12-11"
+}

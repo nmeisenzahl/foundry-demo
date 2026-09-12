@@ -138,3 +138,74 @@ variable "hosted_agent_object_ids" {
     error_message = "hosted_agent_object_ids values must be valid UUIDs."
   }
 }
+
+variable "token_control" {
+  description = <<-DESC
+    Token Control model-gateway configuration for the admin-connected Foundry
+    model. Null disables the connection, and the release-notes-writer agent
+    cannot be deployed without it. Secret-free by construction: the API key is
+    supplied separately through TF_VAR_token_control_api_key.
+  DESC
+  type = object({
+    base_url        = string
+    deployment_name = string
+    model_name      = string
+    model_version   = optional(string, "")
+    # Which dialect the gateway serves. false (the default) is the OpenAI v1
+    # shape Token Control exposes: Foundry calls {base_url}/chat/completions
+    # and passes the deployment name in the request body. Set true only for a
+    # gateway that serves the Azure OpenAI shape,
+    # {base_url}/deployments/{name}/chat/completions.
+    deployment_in_path = optional(bool, false)
+    # Only Azure-OpenAI-shaped gateways need an api-version query parameter.
+    # Leave empty for the OpenAI v1 shape.
+    inference_api_version = optional(string, "")
+  })
+  default = null
+
+  validation {
+    condition = (
+      var.token_control == null ||
+      can(regex("^https://[^/]+(/[^/]+)*$", var.token_control.base_url))
+    )
+    error_message = "token_control.base_url must be an absolute https URL with no trailing slash."
+  }
+
+  validation {
+    condition = (
+      var.token_control == null ||
+      (trimspace(var.token_control.deployment_name) != "" &&
+      !strcontains(var.token_control.deployment_name, "/"))
+    )
+    error_message = "token_control.deployment_name must be non-blank and must not contain '/', because it is the second half of the '<connection>/<model>' reference agents use."
+  }
+
+  validation {
+    condition     = var.token_control == null || trimspace(var.token_control.model_name) != ""
+    error_message = "token_control.model_name must be non-blank."
+  }
+
+  validation {
+    condition = (
+      var.token_control == null ||
+      var.token_control.deployment_in_path ||
+      trimspace(var.token_control.inference_api_version) == ""
+    )
+    error_message = "token_control.inference_api_version applies only to the Azure OpenAI shape; leave it empty unless deployment_in_path is true."
+  }
+}
+
+variable "token_control_api_key" {
+  description = "Token Control API key. Supplied from the environment as TF_VAR_token_control_api_key, never from a tracked tfvars file."
+  type        = string
+  sensitive   = true
+  default     = null
+
+  validation {
+    condition = (
+      (var.token_control == null && var.token_control_api_key == null) ||
+      (var.token_control != null && trimspace(coalesce(var.token_control_api_key, "")) != "")
+    )
+    error_message = "token_control and token_control_api_key must be set together: export TF_VAR_token_control_api_key when token_control is configured, and leave both unset otherwise."
+  }
+}

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from foundry_demo.agents.common.base import HostedAgentSpec
+from foundry_demo.agents.common.base import AgentSpec, HostedAgentSpec, PromptAgentSpec
 
 
 class ConfigurationError(ValueError):
@@ -40,6 +40,39 @@ class DeploymentConfig:
         if not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
             raise ConfigurationError(f"{spec.image_digest_env_var} must be a sha256 image digest.")
         return HostedImage(reference=reference, digest=digest.lower())
+
+    def get_connected_model(self, spec: PromptAgentSpec) -> str:
+        """Resolve and validate an admin-connected model reference.
+
+        Foundry accepts only ``<connection-name>/<model-name>`` for a model
+        behind a gateway connection, and reports anything else as
+        ``model not found`` at invocation time -- after a candidate version
+        already exists. Validating the shape here turns that into a
+        configuration error before the first Foundry call.
+        """
+        env = os.environ if self.environ is None else self.environ
+        variable = spec.connected_model_env_var or ""
+        raw = (env.get(variable) or "").strip()
+        if not raw:
+            raise ConfigurationError(
+                f"{variable} is required for agent {spec.name!r} and cannot be blank."
+            )
+        parts = raw.split("/")
+        if len(parts) != 2 or not all(part.strip() for part in parts):
+            raise ConfigurationError(
+                f"{variable} must use '<connection-name>/<model-name>' form: {raw!r}"
+            )
+        return raw
+
+    def resolve_model_deployment_name(self, spec: AgentSpec) -> str:
+        """Resolve the model an agent runs on.
+
+        Precedence: an admin-connected model, then a spec-level override, then
+        the Terraform-deployed default.
+        """
+        if isinstance(spec, PromptAgentSpec) and spec.connected_model_env_var:
+            return self.get_connected_model(spec)
+        return (spec.model_deployment_name or self.model_deployment_name).strip()
 
 
 def _validate_project_endpoint(endpoint: str) -> str:
