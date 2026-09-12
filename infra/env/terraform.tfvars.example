@@ -6,3 +6,5 @@
 # model_version   = "2026-07-09"
 # model_sku_name  = "GlobalStandard"
 # model_capacity  = 10
+# github_repository       = "octo-org/foundry-demo"
+# github_environment_name = "dev"

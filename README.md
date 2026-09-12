@@ -14,6 +14,8 @@ The repository currently includes:
 
 - `infra/`: Terraform for the Foundry account and project, model deployment,
   Azure Container Registry, monitoring, and RBAC.
+- `.github/workflows/`: pull-request validation plus main-branch deployment
+  orchestration for reviewed agent releases.
 - `src/agents/`: typed, code-first agent definitions and hosted runtime code.
 - `src/delivery/`: configuration, CLI, locking, release records, smoke
   validation, and prompt/hosted SDK adapters.
@@ -82,6 +84,5 @@ uv run pytest -q
 ## Current Scope
 
 This is a local demo and reference implementation, not a production baseline.
-GitHub Actions delivery, workload identity federation, remote Terraform state,
-managed evaluation gates, production network isolation, and centralized
-release evidence remain roadmap items.
+Remote Terraform state, production-grade environment isolation and writer
+restrictions, and managed evaluation gates remain roadmap items.

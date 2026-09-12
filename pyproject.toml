@@ -11,11 +11,14 @@ dependencies = [
 
 [project.scripts]
 deploy-agent = "foundry_demo.delivery.cli:main"
+deployment-matrix = "foundry_demo.delivery.automation:main"
+release-evidence = "foundry_demo.delivery.evidence:main"
 
 [dependency-groups]
 dev = [
   "pytest==9.1.1",
   "ruff==0.16.6",
+  "yamllint==1.37.1",
 ]
 
 [build-system]

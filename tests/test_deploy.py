@@ -819,3 +819,42 @@ def test_deploy_hosted_agent_success(
         "extra_body": {"agent_session_id": "session-hosted"},
         "tool_choice": "required",
     }
+
+
+def test_main_writes_repository_relative_record_path_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FOUNDRY_DEPLOYMENT_RECORD_DIR", "artifacts/deployments")
+    monkeypatch.delenv("FOUNDRY_PROJECT_ENDPOINT", raising=False)
+    monkeypatch.delenv("FOUNDRY_MODEL_DEPLOYMENT_NAME", raising=False)
+    record_path_file = tmp_path / "record-path.txt"
+
+    with pytest.raises(ConfigurationError):
+        main(["--record-path-file", str(record_path_file)])
+
+    written = record_path_file.read_text(encoding="utf-8").strip()
+    records = list((tmp_path / "artifacts/deployments").glob("*.json"))
+    assert len(records) == 1
+    assert written == records[0].relative_to(tmp_path).as_posix()
+    assert not Path(written).is_absolute()
+
+
+def test_main_record_path_file_uses_absolute_path_outside_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository_root = tmp_path / "repo"
+    repository_root.mkdir()
+    records_dir = tmp_path / "external" / "deployments"
+    monkeypatch.chdir(repository_root)
+    monkeypatch.setenv("FOUNDRY_DEPLOYMENT_RECORD_DIR", str(records_dir))
+    monkeypatch.delenv("FOUNDRY_PROJECT_ENDPOINT", raising=False)
+    record_path_file = tmp_path / "record-path.txt"
+
+    with pytest.raises(ConfigurationError):
+        main(["--record-path-file", str(record_path_file)])
+
+    written = Path(record_path_file.read_text(encoding="utf-8").strip())
+    records = list(records_dir.glob("*.json"))
+    assert len(records) == 1
+    assert written == records[0]

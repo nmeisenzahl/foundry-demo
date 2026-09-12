@@ -12,7 +12,24 @@ locals {
     application_insights            = "${var.project_name}-appi"
     application_insights_connection = "${var.project_name}-appi"
     container_registry              = "${replace(var.project_name, "-", "")}acr${random_string.suffix.result}"
+    github_agent_delivery           = "${var.project_name}-dev-gh-delivery"
     architecture_advisor_repository = "architecture-advisor"
+  }
+
+  github_oidc_subject = "repo:${var.github_repository}:environment:${var.github_environment_name}"
+
+  github_actions_environment_variables = {
+    AZURE_SUBSCRIPTION_ID          = data.azurerm_client_config.current.subscription_id
+    AZURE_TENANT_ID                = data.azurerm_client_config.current.tenant_id
+    AZURE_AGENT_DELIVERY_CLIENT_ID = azurerm_user_assigned_identity.github_agent_delivery.client_id
+    FOUNDRY_PROJECT_ENDPOINT       = azurerm_cognitive_account_project.main.endpoints["AI Foundry API"]
+    FOUNDRY_MODEL_DEPLOYMENT_NAME  = azurerm_cognitive_deployment.chat.name
+    ACR_NAME                       = azurerm_container_registry.main.name
+    ACR_LOGIN_SERVER               = azurerm_container_registry.main.login_server
+  }
+
+  github_actions_repository_variables = {
+    APPLICATION_INSIGHTS_PORTAL_URL = "https://portal.azure.com/#@/resource${azurerm_application_insights.main.id}/overview"
   }
 
   role_definition_ids = {

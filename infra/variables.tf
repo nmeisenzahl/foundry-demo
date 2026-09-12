@@ -32,6 +32,27 @@ variable "project_name" {
   }
 }
 
+variable "github_repository" {
+  description = "GitHub repository in owner/name form trusted for workload identity federation."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repository))
+    error_message = "github_repository must use owner/name form."
+  }
+}
+
+variable "github_environment_name" {
+  description = "GitHub Environment trusted to deploy this Terraform environment."
+  type        = string
+  default     = "dev"
+
+  validation {
+    condition     = trimspace(var.github_environment_name) != "" && var.github_environment_name == trimspace(var.github_environment_name)
+    error_message = "github_environment_name cannot be blank or include leading/trailing whitespace."
+  }
+}
+
 variable "model_name" {
   description = "Exact model name offered in the selected Azure region."
   type        = string
