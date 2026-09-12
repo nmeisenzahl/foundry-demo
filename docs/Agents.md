@@ -272,6 +272,16 @@ the Agents API, and a project-scope assignment does not inherit upward to the
 account. `infra/rbac.tf` provisions the same account-scope grant for
 `operator_object_ids` so operators can run the agent locally.
 
+### Resource Tier
+
+Foundry accepts only fixed CPU/memory pairs -- `(0.25, 0.5Gi)`, `(0.5, 1Gi)`,
+`(1, 2Gi)`, `(2, 4Gi)` -- and rejects anything else at `create_version` time,
+i.e. mid-deployment. `HostedAgentSpec` validates the pair on construction so an
+invalid tier fails in `pytest` instead.
+
+Measured peak RSS for a full three-agent cascade is ~310 MiB, so the default
+`(1, 2Gi)` tier applies.
+
 ### Dependency Overrides
 
 `flock-core` pins `opentelemetry-api` and `opentelemetry-sdk` to `1.34.1`, while

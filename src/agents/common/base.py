@@ -61,6 +61,17 @@ class ToolboxSpec:
     mcp_tools: tuple[MCPToolSpec, ...]
 
 
+# Foundry rejects any CPU/memory pair outside this fixed set of resource tiers,
+# and only at create_version time -- so the combination is validated here, where
+# constructing the spec fails fast, rather than mid-deployment.
+FOUNDRY_RESOURCE_TIERS: tuple[tuple[str, str], ...] = (
+    ("0.25", "0.5Gi"),
+    ("0.5", "1Gi"),
+    ("1", "2Gi"),
+    ("2", "4Gi"),
+)
+
+
 @dataclass(frozen=True)
 class HostedAgentSpec(BaseAgentSpec):
     """Specification for a Foundry hosted agent."""
@@ -76,6 +87,14 @@ class HostedAgentSpec(BaseAgentSpec):
     smoke_max_attempts: int = 1
     smoke_retry_seconds: float = 0
     kind: AgentKind = AgentKind.HOSTED
+
+    def __post_init__(self) -> None:
+        if (self.cpu, self.memory) not in FOUNDRY_RESOURCE_TIERS:
+            valid = ", ".join(f"({cpu}, {memory})" for cpu, memory in FOUNDRY_RESOURCE_TIERS)
+            raise AgentSpecError(
+                f"Agent {self.name!r} requests an unsupported resource tier "
+                f"({self.cpu}, {self.memory}). Valid tiers: {valid}."
+            )
 
 
 AgentSpec = PromptAgentSpec | HostedAgentSpec

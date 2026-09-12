@@ -111,7 +111,7 @@ def test_create_hosted_candidate_without_a_toolbox():
     assert definition.container_configuration.image == (
         "example.azurecr.io/incident-triage@sha256:" + "b" * 64
     )
-    assert definition.memory == "4Gi"
+    assert (definition.cpu, definition.memory) == ("1", "2Gi")
     assert definition.environment_variables["AZURE_AI_MODEL_DEPLOYMENT_NAME"] == "model"
 
 

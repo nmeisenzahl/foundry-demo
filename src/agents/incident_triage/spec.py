@@ -23,9 +23,6 @@ INCIDENT_TRIAGE_SPEC = HostedAgentSpec(
     # and that role assignment takes time to propagate after the first deploy.
     smoke_max_attempts=3,
     smoke_retry_seconds=10,
-    # dspy, litellm, and three concurrent completions need more headroom than
-    # the 2Gi default.
-    memory="4Gi",
 )
 
 AGENT_SPEC = INCIDENT_TRIAGE_SPEC

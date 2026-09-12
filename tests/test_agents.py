@@ -204,6 +204,26 @@ def test_architecture_advisor_smoke_validation() -> None:
         ARCHITECTURE_ADVISOR_SPEC.validate_smoke(invalid_evidence)
 
 
+def test_hosted_specs_use_a_valid_foundry_resource_tier() -> None:
+    from foundry_demo.agents.common.base import FOUNDRY_RESOURCE_TIERS, HostedAgentSpec
+
+    hosted = [spec for spec in AGENTS.values() if isinstance(spec, HostedAgentSpec)]
+    assert hosted
+    for spec in hosted:
+        assert (spec.cpu, spec.memory) in FOUNDRY_RESOURCE_TIERS
+
+    # Foundry only rejects an invalid pair at create_version time, so the spec
+    # has to refuse it first.
+    with pytest.raises(AgentSpecError, match="unsupported resource tier"):
+        HostedAgentSpec(
+            name="bad-tier",
+            description="Invalid",
+            smoke_prompt="Hello",
+            cpu="1",
+            memory="4Gi",
+        )
+
+
 def test_incident_triage_needs_no_toolbox_or_forced_tool_call() -> None:
     # The Flock crew calls no tools, so a forced tool choice would fail by
     # construction and there is nothing for a Toolbox to expose.
