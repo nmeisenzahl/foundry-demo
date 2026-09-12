@@ -1,0 +1,45 @@
+{
+  "schema_version": "2",
+  "shared_paths": [
+    ".github/actions/",
+    ".github/deployment/config.json",
+    ".github/workflows/",
+    "pyproject.toml",
+    "src/__init__.py",
+    "src/agents/__init__.py",
+    "src/agents/common/",
+    "src/agents/registry.py",
+    "src/delivery/",
+    "uv.lock"
+  ],
+  "environments": {
+    "dev": {
+      "github_environment": "dev",
+      "artifact_retention_days": 90
+    }
+  },
+  "agents": [
+    {
+      "name": "architecture-advisor",
+      "kind": "hosted",
+      "image_context": "src/agents/architecture_advisor",
+      "image_repository": "architecture-advisor",
+      "image_reference_env": "FOUNDRY_ARCHITECTURE_ADVISOR_IMAGE",
+      "image_digest_env": "FOUNDRY_ARCHITECTURE_ADVISOR_IMAGE_DIGEST",
+      "source_paths": [
+        "src/agents/architecture_advisor/"
+      ]
+    },
+    {
+      "name": "research-assistant",
+      "kind": "prompt",
+      "image_context": "",
+      "image_repository": "",
+      "image_reference_env": "",
+      "image_digest_env": "",
+      "source_paths": [
+        "src/agents/research_assistant/"
+      ]
+    }
+  ]
+}

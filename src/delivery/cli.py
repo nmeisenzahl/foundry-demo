@@ -34,6 +34,22 @@ def deploy(agent_spec, config, recorder) -> None:
         deploy_release(project, agent_spec, config, recorder, operations)
 
 
+def _write_record_path_file(
+    output: Path, record_path: Path, repository_root: Path
+) -> None:
+    """Write the record location for downstream automation.
+
+    Repository-relative when the record lives inside the checkout, absolute
+    otherwise, so callers never have to guess the record directory layout.
+    """
+    try:
+        reported = record_path.resolve().relative_to(repository_root).as_posix()
+    except ValueError:
+        reported = record_path.resolve().as_posix()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(f"{reported}\n", encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> None:
     args = sys.argv[1:] if argv is None else argv
     parser = argparse.ArgumentParser(
@@ -45,10 +61,20 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--list", action="store_true", help="List registered agents without deploying."
     )
+    parser.add_argument(
+        "--record-path-file",
+        type=Path,
+        help=(
+            "Optional file receiving the deployment record path. It is written before "
+            "deployment starts, so failed runs still point at their record."
+        ),
+    )
     parsed = parser.parse_args(args)
     if parsed.list:
         if parsed.agent_name is not None:
             parser.error("--list cannot be combined with an agent name")
+        if parsed.record_path_file is not None:
+            parser.error("--list cannot be combined with --record-path-file")
         print("Available agents:")
         for name in list_agents():
             print(f"  - {name}")
@@ -64,6 +90,10 @@ def main(argv: list[str] | None = None) -> None:
         record_dir=record_dir,
         audit_metadata=collect_audit_metadata(environ, repository_root),
     ) as recorder:
+        if parsed.record_path_file is not None:
+            _write_record_path_file(
+                parsed.record_path_file, recorder.record_path, repository_root
+            )
         spec = get_agent(agent_name)
         config = load_config(environ)
         with deployment_lock(project_endpoint=config.project_endpoint, agent_name=spec.name):

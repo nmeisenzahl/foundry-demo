@@ -77,6 +77,60 @@ returns `403`, wait for propagation and run the apply again.
 Public networking is enabled for this demo. It is not intended as a general
 production default.
 
+## GitHub Actions OIDC Bootstrap (dev)
+
+The reviewed tfvars file must include the repository and deployment environment
+trusted by workload identity federation:
+
+```hcl
+github_repository       = "octo-org/foundry-demo"
+github_environment_name = "dev"
+```
+
+`github_environment_name` is part of the federated identity subject:
+`repo:<owner>/<repo>:environment:<environment>`. If the GitHub Environment name
+does not match Terraform, Azure login from Actions will be rejected.
+
+After setting those values, run the existing local apply:
+
+```bash
+terraform -chdir=infra apply -var-file=env/dev.tfvars
+```
+
+Then export the reviewed GitHub configuration variables by scope:
+
+```bash
+terraform -chdir=infra output -json github_actions_environment_variables
+terraform -chdir=infra output -json github_actions_repository_variables
+```
+
+Create a GitHub Environment named `dev` in the repository, then add every value
+returned in `github_actions_environment_variables` as an **Environment
+variable** (repository **Settings > Environments > dev > Variables**). Do not
+store these values as secrets.
+
+The seven Environment variable names returned by Terraform are:
+
+- `AZURE_SUBSCRIPTION_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_AGENT_DELIVERY_CLIENT_ID`
+- `FOUNDRY_PROJECT_ENDPOINT`
+- `FOUNDRY_MODEL_DEPLOYMENT_NAME`
+- `ACR_NAME`
+- `ACR_LOGIN_SERVER`
+
+In the same `dev` environment configuration, set deployment branch restrictions
+to `main` and add any required reviewers used for your release policy.
+
+Add `APPLICATION_INSIGHTS_PORTAL_URL` from
+`github_actions_repository_variables` as a **repository-level Actions
+variable** (**Settings > Secrets and variables > Actions > Variables**), not
+only as a `dev` Environment variable. Release aggregation has no GitHub
+Environment and cannot read Environment-scoped variables. This monitoring
+link is non-sensitive and optional: if absent, aggregation omits
+`--monitoring-url`, records `monitoring_url: null`, and reports monitoring as
+not configured without failing manifest generation.
+
 ## Runtime Environment
 
 The project API endpoint is exported by Terraform under the `AI Foundry API`
@@ -102,8 +156,10 @@ export FOUNDRY_AGENT_TEMPERATURE="0.2"
 export FOUNDRY_DEPLOYMENT_RECORD_DIR="$PWD/artifacts/deployments"
 ```
 
-Hosted-agent publishing also generates environment variables containing the
-immutable image reference and digest. Follow [Agents](Agents.md#deploy-the-hosted-agent)
+Hosted-agent publishing also generates environment variables containing a
+unique fully qualified tagged image reference and a separate immutable digest.
+Delivery converts these to `repository@digest` for the candidate and evidence.
+Follow [Agents](Agents.md#deploy-the-hosted-agent)
 to produce and load that file.
 
 ## Local Development

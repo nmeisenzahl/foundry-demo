@@ -1,0 +1,252 @@
+---
+name: Deploy agent
+
+"on":
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      artifact_retention_days:
+        required: true
+        type: number
+      agent_name:
+        required: true
+        type: string
+      source_sha:
+        required: true
+        type: string
+      agent_kind:
+        required: true
+        type: string
+      image_context:
+        required: true
+        type: string
+      image_repository:
+        required: true
+        type: string
+      image_reference_env:
+        required: true
+        type: string
+      image_digest_env:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.agent_name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ${{ inputs.environment }}
+    # GitHub keeps one pending run per group and never cancels an in-progress
+    # deployment of the same target.
+    concurrency:
+      group: foundry-${{ inputs.environment }}-${{ inputs.agent_name }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      UV_PYTHON: "3.11"
+      RECORD_PATH_FILE: ${{ github.workspace }}/deployment-record-path.txt
+    steps:
+      - name: Checkout caller commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          enable-cache: true
+
+      - name: Install Python 3.11
+        run: uv python install 3.11
+
+      - name: Sync frozen runtime dependencies
+        run: uv sync --frozen --no-dev
+
+      - name: Login as agent delivery identity
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c
+        with:
+          client-id: ${{ vars.AZURE_AGENT_DELIVERY_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to Azure Container Registry
+        if: inputs.agent_kind == 'hosted'
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Resolve hosted image identity
+        id: image_identity
+        if: inputs.agent_kind == 'hosted'
+        env:
+          ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+          IMAGE_REPOSITORY: ${{ inputs.image_repository }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -eu
+          if [ -z "$ACR_LOGIN_SERVER" ]; then
+            echo "::error::Repository variable ACR_LOGIN_SERVER is not set."
+            exit 1
+          fi
+          repository="${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}"
+          unique_tag="run-${RUN_ID}-attempt-${RUN_ATTEMPT}"
+          {
+            printf 'repository=%s\n' "$repository"
+            printf 'tagged_reference=%s:%s\n' "$repository" "$unique_tag"
+            printf 'tags=%s:%s,%s:sha-%s\n' \
+              "$repository" "$unique_tag" "$repository" "$SOURCE_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish hosted image
+        id: hosted_image
+        if: inputs.agent_kind == 'hosted'
+        uses: ./.github/actions/build-hosted-image
+        with:
+          context: ${{ inputs.image_context }}
+          push: "true"
+          tags: ${{ steps.image_identity.outputs.tags }}
+          cache-scope: ${{ inputs.image_repository }}
+
+      - name: Export hosted image identity
+        if: inputs.agent_kind == 'hosted'
+        env:
+          IMAGE_TAGGED_REFERENCE: >-
+            ${{ steps.image_identity.outputs.tagged_reference }}
+          IMAGE_REPOSITORY_REFERENCE: >-
+            ${{ steps.image_identity.outputs.repository }}
+          IMAGE_DIGEST: ${{ steps.hosted_image.outputs.digest }}
+          IMAGE_DIGEST_ENV_NAME: ${{ inputs.image_digest_env }}
+          IMAGE_REFERENCE_ENV_NAME: ${{ inputs.image_reference_env }}
+        run: |
+          set -eu
+          if ! printf '%s\n' "$IMAGE_DIGEST" |
+            grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::Hosted image build returned an invalid digest."
+            exit 1
+          fi
+          for variable_name in \
+            "$IMAGE_REFERENCE_ENV_NAME" "$IMAGE_DIGEST_ENV_NAME"; do
+            if ! printf '%s\n' "$variable_name" |
+              grep -Eq '^[A-Za-z_][A-Za-z0-9_]*$'; then
+              echo "::error::Invalid image environment variable name: \
+                ${variable_name:-<empty>}"
+              exit 1
+            fi
+          done
+          {
+            printf '%s=%s\n' \
+              "$IMAGE_REFERENCE_ENV_NAME" "$IMAGE_TAGGED_REFERENCE"
+            printf '%s=%s\n' "$IMAGE_DIGEST_ENV_NAME" "$IMAGE_DIGEST"
+            printf 'DEPLOYMENT_IMAGE_REFERENCE=%s@%s\n' \
+              "$IMAGE_REPOSITORY_REFERENCE" "$IMAGE_DIGEST"
+            printf 'DEPLOYMENT_IMAGE_DIGEST=%s\n' "$IMAGE_DIGEST"
+          } >> "$GITHUB_ENV"
+
+      - name: Deploy agent
+        id: deploy
+        env:
+          AGENT_NAME: ${{ inputs.agent_name }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+          FOUNDRY_MODEL_DEPLOYMENT_NAME: >-
+            ${{ vars.FOUNDRY_MODEL_DEPLOYMENT_NAME }}
+          FOUNDRY_DEPLOYMENT_RECORD_DIR: artifacts/deployments
+        run: |
+          uv run deploy-agent "$AGENT_NAME" \
+            --record-path-file "$RECORD_PATH_FILE"
+
+      - name: Write deployment evidence
+        if: always()
+        env:
+          AGENT_KIND: ${{ inputs.agent_kind }}
+          AGENT_NAME: ${{ inputs.agent_name }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          JOB_STATUS_RAW: ${{ job.status }}
+          IMAGE_BUILD_OUTCOME_RAW: ${{ steps.hosted_image.outcome }}
+          DEPLOY_OUTCOME_RAW: ${{ steps.deploy.outcome }}
+        run: |
+          set -eu
+          mkdir -p artifacts/evidence
+
+          case "$JOB_STATUS_RAW" in
+            success) job_status=succeeded ;;
+            *) job_status=failed ;;
+          esac
+
+          if [ "$AGENT_KIND" = "prompt" ]; then
+            image_build_outcome=not_applicable
+          else
+            case "$IMAGE_BUILD_OUTCOME_RAW" in
+              success) image_build_outcome=succeeded ;;
+              failure) image_build_outcome=failed ;;
+              skipped) image_build_outcome=skipped ;;
+              *) image_build_outcome=not_applicable ;;
+            esac
+          fi
+
+          case "$DEPLOY_OUTCOME_RAW" in
+            success) deploy_outcome=succeeded ;;
+            failure|cancelled) deploy_outcome=failed ;;
+            skipped) deploy_outcome=skipped ;;
+            *) deploy_outcome=not_applicable ;;
+          esac
+
+          evidence_args=(
+            --output "artifacts/evidence/${AGENT_NAME}.json"
+            --agent-name "$AGENT_NAME"
+            --agent-kind "$AGENT_KIND"
+            --environment "$ENVIRONMENT"
+            --run-id "$RELEASE_RUN_ID"
+            --run-attempt "$RELEASE_RUN_ATTEMPT"
+            --job-status "$job_status"
+            --image-build-outcome "$image_build_outcome"
+            --deploy-outcome "$deploy_outcome"
+          )
+
+          if [ "$AGENT_KIND" = "hosted" ]; then
+            image_reference="${DEPLOYMENT_IMAGE_REFERENCE:-}"
+            image_digest="${DEPLOYMENT_IMAGE_DIGEST:-}"
+            if [ -n "$image_reference" ] && [ -n "$image_digest" ]; then
+              evidence_args+=(--image-reference "$image_reference")
+              evidence_args+=(--image-digest "$image_digest")
+            fi
+          fi
+
+          # deploy-agent reports its record path up front, so a failed run
+          # still references the record it wrote.
+          deployment_record=""
+          if [ -f "$RECORD_PATH_FILE" ]; then
+            IFS= read -r deployment_record < "$RECORD_PATH_FILE" || true
+          fi
+          if [ -n "$deployment_record" ] && [ -f "$deployment_record" ]; then
+            evidence_args+=(
+              --deployment-record "${deployment_record#artifacts/}"
+            )
+          else
+            echo "::warning::No deployment record was found for ${AGENT_NAME}."
+          fi
+
+          uv run release-evidence job "${evidence_args[@]}"
+
+      - name: Upload deployment artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: >-
+            deployment-${{ github.run_id }}-${{ inputs.agent_name }}-attempt-${{
+            github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: ${{ inputs.artifact_retention_days }}

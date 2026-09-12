@@ -57,3 +57,13 @@ output "architecture_advisor_repository" {
   description = "Repository name used for the architecture advisor image."
   value       = local.names.architecture_advisor_repository
 }
+
+output "github_actions_environment_variables" {
+  description = "Seven non-sensitive GitHub Environment variables for deployment authentication and runtime configuration."
+  value       = local.github_actions_environment_variables
+}
+
+output "github_actions_repository_variables" {
+  description = "Non-sensitive repository-level GitHub Actions variables for aggregation jobs without a GitHub Environment."
+  value       = local.github_actions_repository_variables
+}
