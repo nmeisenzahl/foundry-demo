@@ -139,10 +139,14 @@ jobs:
         if: always()
         run: |
           set -eu
+          # The code-span backticks are passed as arguments rather than
+          # written into the format string, where shellcheck would read them
+          # as command substitution (SC2016).
+          tick='`'
           {
             printf '## Terraform apply (dev)\n\n'
-            printf -- '- Commit: `%s`\n' "$GITHUB_SHA"
-            printf -- '- Result: `%s`\n\n' "$JOB_STATUS"
+            printf -- '- Commit: %s%s%s\n' "$tick" "$GITHUB_SHA" "$tick"
+            printf -- '- Result: %s%s%s\n\n' "$tick" "$JOB_STATUS" "$tick"
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$JOB_STATUS" != "success" ]; then
             exit 0
