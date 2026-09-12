@@ -103,3 +103,16 @@ variable "github_oidc_subject_prefix" {
     error_message = "github_oidc_subject_prefix must look like \"repo:<owner>@<owner_id>/<name>@<repo_id>\"."
   }
 }
+
+variable "operator_object_ids" {
+  description = "Entra ID object IDs granted operator access to the Foundry project and container registry. Supplied by environment so local and CI runs plan identically."
+  type        = list(string)
+
+  validation {
+    condition = alltrue([
+      for id in var.operator_object_ids :
+      can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", id))
+    ])
+    error_message = "operator_object_ids entries must be valid UUIDs."
+  }
+}
