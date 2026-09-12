@@ -16,7 +16,11 @@ locals {
     architecture_advisor_repository = "architecture-advisor"
   }
 
-  github_oidc_subject = "repo:${var.github_repository}:environment:${var.github_environment_name}"
+  # Repositories with immutable subject claims present
+  # repo:<owner>@<owner_id>/<name>@<repo_id> instead of repo:<owner>/<name>, so the
+  # trusted subject has to mirror whatever prefix the repository actually emits.
+  github_oidc_subject_prefix = coalesce(var.github_oidc_subject_prefix, "repo:${var.github_repository}")
+  github_oidc_subject        = "${local.github_oidc_subject_prefix}:environment:${var.github_environment_name}"
 
   github_actions_environment_variables = {
     AZURE_SUBSCRIPTION_ID          = data.azurerm_client_config.current.subscription_id
