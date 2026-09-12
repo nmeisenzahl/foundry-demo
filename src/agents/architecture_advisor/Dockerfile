@@ -1,5 +1,5 @@
 FROM ghcr.io/astral-sh/uv@sha256:a19035b77e3ba952fe48e88ff93d160853d8b2abeccc1a19571573fdb1fa78aa AS uv
-FROM python@sha256:a7cb177dc60dfa77b223192cd0d9e6ce1aac7cf9a569023d68e7c91b6371a718
+FROM python@sha256:e06cc1111ed84189e91866447f562b89faadbfbbb9937cd67e6bf4172cdb45df
 
 ENV PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH" \
