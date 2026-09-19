@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.13.*"
 
 [options]
@@ -40,7 +40,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework-foundry-hosting"
-version = "1.0.0b260903"
+version = "1.0.0b260910"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -50,9 +50,9 @@ dependencies = [
     { name = "httpx" },
     { name = "mcp" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/67/ee/39d70fadd77b42a9e05916752dc2767e4c21a076560bc1b36e3a901165ab/agent_framework_foundry_hosting-1.0.0b260903.tar.gz", hash = "sha256:7e20d15af9574059b2661e45121c3d557c78d4271290abe8e85e712ffd1c1027", size = 36782, upload-time = "2026-09-03T09:53:49.224Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/08/b1/7108ad787144c5a20ec50510e93ef93a9b1dd8d63e81450d23b913bc06b5/agent_framework_foundry_hosting-1.0.0b260910.tar.gz", hash = "sha256:ae04d6e18efd05f77aa7e71e5589255869167939d8ccbe4126b8a9d9fb6e3f28", size = 37329, upload-time = "2026-09-10T09:29:24.155Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/95/4e/fd3c536e36cd0445d5b8dc9f74bfe970cc9c62ae715c4f3d8167d2d2ec86/agent_framework_foundry_hosting-1.0.0b260903-py3-none-any.whl", hash = "sha256:26c1699c882c82f3faf71377edcc63e407d33e12522f29800183414c8eb04499", size = 37556, upload-time = "2026-09-03T09:53:37.655Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/af/c47cc75d95b4d7c53a549c45462a520894702a1ad29b32a872e8ce9158c6/agent_framework_foundry_hosting-1.0.0b260910-py3-none-any.whl", hash = "sha256:f04fadd48e3c3c4b199bf85ffc90751c682570bc61e6950c4f72d7348916c3d7", size = 38203, upload-time = "2026-09-10T09:29:00.141Z" },
 ]
 
 [[package]]
@@ -482,7 +482,7 @@ dev = [
 requires-dist = [
     { name = "agent-framework-core", specifier = "==1.17.0" },
     { name = "agent-framework-foundry", specifier = "==1.12.0" },
-    { name = "agent-framework-foundry-hosting", specifier = "==1.0.0b260903" },
+    { name = "agent-framework-foundry-hosting", specifier = "==1.0.0b260910" },
     { name = "azure-ai-agentserver-core", specifier = "==2.1.0" },
     { name = "azure-identity", specifier = "==1.25.3" },
     { name = "python-dotenv", specifier = "==1.2.3" },
