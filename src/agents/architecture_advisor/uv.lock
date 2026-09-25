@@ -23,7 +23,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework-foundry"
-version = "1.12.0"
+version = "1.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -33,9 +33,9 @@ dependencies = [
     { name = "azure-ai-projects" },
     { name = "httpx" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/14/a1/2a1a8b7d50d0ab6de9c7170b1f90a9d91f664a40f833913b2d2164dba91e/agent_framework_foundry-1.12.0.tar.gz", hash = "sha256:6361fb0ead699ddc907c95c4ecac7176d688f14a3d60f00e8dfdf06904336356", size = 51220, upload-time = "2026-09-03T09:53:48.254Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/87/77/3705a14f739ae0e946e471a003977f8d8d887e1a87f1b97277a7818a2b7a/agent_framework_foundry-1.13.0.tar.gz", hash = "sha256:77d7091533ac636e49b02077b20f5fd63eb2840aad79c62d40e1a685a00a4cde", size = 53028, upload-time = "2026-09-10T09:29:23.096Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bc/6b/b066715e5ccc2d906920b1859160c54703aacc213f2f01c5e8e121d8555a/agent_framework_foundry-1.12.0-py3-none-any.whl", hash = "sha256:f48362cd01962a526ec8f88f67608fbac13d1c728400c6c6ec8a5bc9b1f42c94", size = 53787, upload-time = "2026-09-03T09:53:36.555Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/00/95ad6251ee1745cd3d091817d639224a7cdfcc432ff31129358f02ccfe29/agent_framework_foundry-1.13.0-py3-none-any.whl", hash = "sha256:6204adb6d075a7f8be202eb6a476d5207f954df57e06e038b2243c4154b8353f", size = 55494, upload-time = "2026-09-10T09:28:59.025Z" },
 ]
 
 [[package]]
@@ -481,7 +481,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", specifier = "==1.18.0" },
-    { name = "agent-framework-foundry", specifier = "==1.12.0" },
+    { name = "agent-framework-foundry", specifier = "==1.13.0" },
     { name = "agent-framework-foundry-hosting", specifier = "==1.0.0b260910" },
     { name = "azure-ai-agentserver-core", specifier = "==2.1.0" },
     { name = "azure-identity", specifier = "==1.25.3" },
