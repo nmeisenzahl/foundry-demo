@@ -206,11 +206,18 @@ Flock treats as an AND gate and fires once, after both have published. No edges
 are declared anywhere in `flock_app.py` -- the topology is a consequence of the
 Pydantic contracts.
 
-One HTTP turn drives one blackboard run. The handler publishes the caller's text
-as an `IncidentReport` under a correlation ID, waits for the cascade, and emits
-each resulting artifact as its own Responses output item. That makes the
-multi-agent flow visible to callers and gives smoke validation something to
-assert: three output items can only exist if the full cascade completed.
+One HTTP turn drives one isolated blackboard run. `main.py` wraps the crew in a
+`flock.FlockApplication` and hosts it with Flock's Foundry integration
+(`flock.integrations.foundry.FoundryResponsesAdapter`): each Responses turn gets a fresh blackboard, the
+caller's text becomes an `IncidentReport`, and each artifact is streamed as its
+own Responses output item as soon as it is published. All three artifact types
+are required outputs, so a turn only completes if the full cascade ran - which is
+also what smoke validation asserts. Concurrent turns run in parallel and never
+see each other's artifacts; a replica accepts up to `MAX_ACTIVE_WORKFLOWS` (8)
+turns at once and answers further ones with `rate_limit_exceeded`; agent failures surface as `response.failed` with a
+safe failure code (details stay in the container log). HTTP, SSE, background
+mode, polling, cancellation, readiness and graceful shutdown come from the
+adapter and the official AgentServer SDK.
 
 ### Model Access
 
@@ -239,15 +246,16 @@ one-off unblock.
 
 Two runtime details are load-bearing and easy to lose:
 
-- LiteLLM cannot infer a model family from an Azure *deployment* name, so its
-  parameter mapping never fires. Current Foundry chat models reject
-  `max_tokens`, which `DSPyEngine` always sends, so the agent passes
-  `additional_drop_params=["max_tokens"]`. `DSPyEngine` reserves
-  `max_completion_tokens` without ever setting it, so no replacement cap can be
-  supplied and the model's default output limit applies.
-- Flock-level token streaming is disabled. The handler emits whole artifacts
+- LiteLLM cannot infer a model family from an Azure *deployment* name, and
+  current Foundry chat models reject `max_tokens`. The engines therefore set
+  `DSPyEngine(max_completion_tokens=4000)`, which sends only
+  `max_completion_tokens` and keeps the output bounded.
+- Flock-level token streaming is disabled. The adapter emits whole artifacts
   rather than tokens, and LiteLLM's `StreamWrapper` fails under the hosting
   runtime's GenAI tracing instrumentation.
+
+The token provider is created once per process and shared by every turn;
+LiteLLM caches its Azure client per provider and the provider refreshes tokens.
 
 The inference base URL is derived from the injected `FOUNDRY_PROJECT_ENDPOINT`
 and validated in `model_endpoint.py`. Both `AZURE_API_BASE` and
@@ -305,15 +313,19 @@ invalid tier fails in `pytest` instead.
 Measured peak RSS for a full three-agent cascade is ~310 MiB, so the default
 `(1, 2Gi)` tier applies.
 
-### Dependency Overrides
+### Dependencies
 
-`flock-core` pins `opentelemetry-api` and `opentelemetry-sdk` to `1.34.1`, while
-every release of `azure-ai-agentserver-core` requires `>=1.43`. Both use only
-stable OpenTelemetry 1.x APIs, so `src/agents/incident_triage/pyproject.toml`
-forces the newer runtime through `[tool.uv] override-dependencies` rather than
-forking either dependency. `googleapis-common-protos` is overridden for the same
-reason: `flock-core`'s deprecated Jaeger exporter caps it below what the OTLP
-exporter needs, and nothing here exports to Jaeger.
+The agent depends on `flock-core[azure,foundry]==0.5.612` (OpenTelemetry
+`>=1.43`, no Jaeger exporter; the `foundry` extra brings the AgentServer SDK),
+so no `override-dependencies` are needed.
+
+> **Release pending:** `flock-core` 0.5.612 is not on PyPI yet, so the agent's
+> `uv.lock` cannot be resolved against it and `uv sync --frozen` fails until the
+> release. Once it is published, re-lock and commit the lock:
+>
+> ```bash
+> uv lock --directory src/agents/incident_triage --refresh-package flock-core
+> ```
 
 ## Deploy the Connected-Model Prompt Agent
 

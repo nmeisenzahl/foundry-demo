@@ -2,15 +2,6 @@ version = 1
 revision = 2
 requires-python = "==3.13.*"
 
-[manifest]
-overrides = [
-    { name = "googleapis-common-protos", specifier = ">=1.60.0" },
-    { name = "opentelemetry-api", specifier = ">=1.43.0" },
-    { name = "opentelemetry-exporter-otlp", specifier = ">=1.43.0" },
-    { name = "opentelemetry-instrumentation-logging", specifier = ">=0.64b0" },
-    { name = "opentelemetry-sdk", specifier = ">=1.43.0" },
-]
-
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.7.1"
@@ -568,8 +559,8 @@ wheels = [
 
 [[package]]
 name = "flock-core"
-version = "0.5.610"
-source = { registry = "https://pypi.org/simple" }
+version = "0.5.612"
+source = { registry = "wheels" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "croniter" },
@@ -583,8 +574,6 @@ dependencies = [
     { name = "loguru" },
     { name = "mcp" },
     { name = "opentelemetry-api" },
-    { name = "opentelemetry-exporter-jaeger" },
-    { name = "opentelemetry-exporter-jaeger-proto-grpc" },
     { name = "opentelemetry-exporter-otlp" },
     { name = "opentelemetry-instrumentation-logging" },
     { name = "opentelemetry-sdk" },
@@ -598,43 +587,46 @@ dependencies = [
     { name = "uvicorn" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f0/f9/4111f2f275e981e48207d5348ca734334e56ea4a3f6b14d3831f3ae0af96/flock_core-0.5.610.tar.gz", hash = "sha256:6a79f6d56f466808a503eea3f642608a2bd9d50fa8131a995ac0b0ff0dac99d4", size = 4341145, upload-time = "2026-09-03T13:35:36.386Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/bc/35b610003ccf1b5f9cc85a211c6c81f55f74f4802d3e96618e7ec0171ec6/flock_core-0.5.610-py3-none-any.whl", hash = "sha256:96da68bac0050111e3b087ac32c838805a410b4b5551546f6a14f3efd9dbc188", size = 1171898, upload-time = "2026-09-03T13:35:33.849Z" },
+    { path = "flock_core-0.5.612-py3-none-any.whl" },
 ]
 
 [package.optional-dependencies]
 azure = [
     { name = "azure-identity" },
 ]
+foundry = [
+    { name = "azure-ai-agentserver-core" },
+    { name = "azure-ai-agentserver-responses" },
+]
 
 [[package]]
 name = "foundry-demo-incident-triage"
-version = "0.1.0"
+version = "0.2.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "azure-ai-agentserver-core" },
-    { name = "azure-ai-agentserver-responses" },
     { name = "azure-identity" },
-    { name = "flock-core", extra = ["azure"] },
+    { name = "flock-core", extra = ["azure", "foundry"] },
+    { name = "python-dotenv" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "httpx" },
     { name = "pytest" },
     { name = "ruff" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "azure-ai-agentserver-core", specifier = "==2.1.0" },
-    { name = "azure-ai-agentserver-responses", specifier = "==2.1.0" },
     { name = "azure-identity", specifier = "==1.25.3" },
-    { name = "flock-core", extras = ["azure"], specifier = "==0.5.610" },
+    { name = "flock-core", extras = ["azure", "foundry"], specifier = "==0.5.612" },
+    { name = "python-dotenv", specifier = "==1.2.2" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "httpx", specifier = "==0.28.1" },
     { name = "pytest", specifier = "==9.1.1" },
     { name = "ruff", specifier = "==0.16.6" },
 ]
@@ -1262,48 +1254,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ee/8b/aa9e2d8b8dfa7c946f7dec5d1f8f6ba8eca062f43509a06bdb5ce93d26c0/opentelemetry_api-1.44.0.tar.gz", hash = "sha256:67647e5e9566edcf421166fdf022b3537f818635daa852b289e34604dc6fb33a", size = 72406, upload-time = "2026-07-16T15:25:32.678Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/6f/a04e900f465ff3221ccc395522503e2d10e79fa21f2723c8e177aae1e0d1/opentelemetry_api-1.44.0-py3-none-any.whl", hash = "sha256:94b98c893a91b88657eaac1e3ba89618cdb85be6918196705354f34728b2cdef", size = 60018, upload-time = "2026-07-16T15:25:11.657Z" },
-]
-
-[[package]]
-name = "opentelemetry-exporter-jaeger"
-version = "1.21.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "opentelemetry-exporter-jaeger-proto-grpc" },
-    { name = "opentelemetry-exporter-jaeger-thrift" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b6/52/d84ee33cb2a3b32f820bd1af035cdfe1fa03baa692aabb90bbe01812a235/opentelemetry_exporter_jaeger-1.21.0.tar.gz", hash = "sha256:e5650af9d09adad35add56b93d9856bd410644d25b0b5b87e6111467b9877dc2", size = 6150, upload-time = "2023-11-07T23:16:24.258Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/bc/71/f45b52bde0cd0b316fd7ef034afa93d171c1de612923ea9e6be76dfe0d50/opentelemetry_exporter_jaeger-1.21.0-py3-none-any.whl", hash = "sha256:3d645eff7e31461d917be5c6635803ad7913cbb7662feed014ba2fe6e005b209", size = 7038, upload-time = "2023-11-07T23:15:48.48Z" },
-]
-
-[[package]]
-name = "opentelemetry-exporter-jaeger-proto-grpc"
-version = "1.21.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "googleapis-common-protos" },
-    { name = "grpcio" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-sdk" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/68/c1/69b224098252b89a79e075db1be7001bb14095daff1c0348c3e83b466e85/opentelemetry_exporter_jaeger_proto_grpc-1.21.0.tar.gz", hash = "sha256:359ceb15b72e798881b4b7b2afdcbc189aef3a0508944856ac70d74968574ed7", size = 32224, upload-time = "2023-11-07T23:16:25.406Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/77/2e/d062a7a009138a40dd748add1cbe1c761eebfc791440bc7a631b53f8e5bd/opentelemetry_exporter_jaeger_proto_grpc-1.21.0-py3-none-any.whl", hash = "sha256:cf8ec4761c56d611e7bfb9538d4d85ea6a67cd1548f12deff83afaa5c447816e", size = 37548, upload-time = "2023-11-07T23:15:50.391Z" },
-]
-
-[[package]]
-name = "opentelemetry-exporter-jaeger-thrift"
-version = "1.21.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-sdk" },
-    { name = "thrift" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c7/ff/560d975ce09ec123dce1b7a97877bad1a5b2424c5c8e31e55169d4cd85e6/opentelemetry_exporter_jaeger_thrift-1.21.0.tar.gz", hash = "sha256:41119bc7e5602cec83dd7d7060f061ecbc91de231272e8f515b07ef9a4b6e41c", size = 27722, upload-time = "2023-11-07T23:16:26.522Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/81/2b/c6ff9604f5b8469e1fabe2b6ee50c36dadf0f572a430494d8dd5ce37d99f/opentelemetry_exporter_jaeger_thrift-1.21.0-py3-none-any.whl", hash = "sha256:4364b8dfa6965707c72c43d85942b1491982b7d44f0123d593513e8bedafa9e2", size = 35929, upload-time = "2023-11-07T23:15:52.341Z" },
 ]
 
 [[package]]
@@ -2178,21 +2128,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/47/c6/ee486fd809e357697ee8a44d3d69222b344920433d3b6666ccd9b374630c/tenacity-9.1.4.tar.gz", hash = "sha256:adb31d4c263f2bd041081ab33b498309a57c77f9acf2db65aadf0898179cf93a", size = 49413, upload-time = "2026-02-07T10:45:33.841Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d7/c1/eb8f9debc45d3b7918a32ab756658a0904732f75e555402972246b0b8e71/tenacity-9.1.4-py3-none-any.whl", hash = "sha256:6095a360c919085f28c6527de529e76a06ad89b23659fa881ae0649b867a9d55", size = 28926, upload-time = "2026-02-07T10:45:32.24Z" },
-]
-
-[[package]]
-name = "thrift"
-version = "0.24.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5f/bd/8f90501b11206e545da3343ed0e5740fc694be24a5f637d7dd7e4e3af927/thrift-0.24.0.tar.gz", hash = "sha256:9ef601c49e988475ff0e741d8e1b45feec23b48514e524341efc274191f1789c", size = 69228, upload-time = "2026-07-11T16:53:50.933Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/5a/3b0d7b47ae73c28891997433447f87ba26de0fc11ca9fd4ea8c6b497bf23/thrift-0.24.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:ebb8b389142d67554d0de814dd6c1d62b962751f68721537efca429c57b09327", size = 224851, upload-time = "2026-07-11T16:53:32.528Z" },
-    { url = "https://files.pythonhosted.org/packages/e9/d8/4e17cce911ebbf76c59472b488dbe25c32d51cef2500b6e255a9fb59ff02/thrift-0.24.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:18e7693f1bcef45937ad31a02564add55dec754710d42afc8ee3fc26ecf13028", size = 224313, upload-time = "2026-07-11T16:53:33.797Z" },
-    { url = "https://files.pythonhosted.org/packages/fd/9a/eb8cb5a75fdff60b21b78c712a455adac01e1768792c3232184fa7202961/thrift-0.24.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:937b398c311799fd5eddaeaffbd275510c68ead597eb1897e5e8113542fb2b50", size = 532517, upload-time = "2026-07-11T16:53:35.458Z" },
-    { url = "https://files.pythonhosted.org/packages/30/b7/d0ecdf3573eb4026343d04efa64cf465a8453e699bd41a2d68156c3caf83/thrift-0.24.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:b89a83d4e9ae6029e14f6f7c73305044bf02739d729c6aa8025ef3b6faef0ec0", size = 541124, upload-time = "2026-07-11T16:53:36.767Z" },
-    { url = "https://files.pythonhosted.org/packages/df/ce/37daa851995ad441e38f83b2a8e67cdf68df10148779fb5bbafd4fb24f6b/thrift-0.24.0-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:6381093f2c54e0f108554004a8cac3f1ef7ba99d6c5a9909c0eb64f450142685", size = 1476528, upload-time = "2026-07-11T16:53:38.056Z" },
-    { url = "https://files.pythonhosted.org/packages/d6/67/80f3aeced7a38d17a281d1b9904ab9e93ab493f5c75e144b3180c278041c/thrift-0.24.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:28e034658d724aaa66007babb258ef12f0294036812fc449d7ce6fd15b07100f", size = 1537515, upload-time = "2026-07-11T16:53:39.316Z" },
-    { url = "https://files.pythonhosted.org/packages/37/1f/169f93d531a0d9546b6f18dacf37752c27cccfa719bf231162d1fcf8d0e0/thrift-0.24.0-cp313-cp313-win_amd64.whl", hash = "sha256:f4a44391ae1e32817553639b2991b0753d84487259fe87f8111c956c6bdebf43", size = 409450, upload-time = "2026-07-11T16:53:40.711Z" },
 ]
 
 [[package]]

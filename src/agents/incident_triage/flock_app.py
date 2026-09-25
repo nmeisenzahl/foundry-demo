@@ -5,16 +5,20 @@ The agents are wired by *type subscription only*. ``impact_assessor`` and
 concurrently. ``incident_commander`` consumes both of their output types, which
 Flock treats as an AND gate: it fires once, after both have published. No edges
 are declared anywhere -- the topology is a consequence of the contracts below.
+
+:func:`build_application` wraps the crew in a :class:`flock.FlockApplication`:
+every Responses turn runs as its own isolated workflow on a fresh blackboard,
+so concurrent turns neither wait for nor see each other.
 """
 
 from collections.abc import Callable
 from typing import Any
 
 import dspy
-from flock import Flock, flock_type
-from flock.core.context_provider import CorrelatedContextProvider
+from flock import Flock, FlockApplication, WorkflowContext, flock_type
+from flock.components.agent import EngineComponent
 from flock.engines import DSPyEngine
-from flock.engines.auth.azure import get_default_azure_token_provider
+from flock.integrations.foundry import foundry_headers
 from pydantic import BaseModel, Field
 
 # Flock hands DSPy the artifact payload as a dict (`_validate_input_payload`
@@ -28,13 +32,17 @@ dspy.settings.configure(warn_on_type_mismatch=False)
 
 SEVERITY_PATTERN = "^(Critical|High|Medium|Low)$"
 
-# DSPyEngine always sends `max_tokens`, which current Foundry chat models reject
-# in favour of `max_completion_tokens`. LiteLLM cannot infer the model family
-# behind an Azure *deployment* name, so its own parameter mapping does not fire
-# and the parameter has to be dropped explicitly. DSPyEngine reserves
-# `max_completion_tokens` without ever setting it, so no replacement cap can be
-# supplied and the model's default output limit applies.
-DROPPED_LM_PARAMS = ["max_tokens"]
+# Current Foundry chat models reject `max_tokens`, and LiteLLM cannot infer the
+# model family behind an Azure *deployment* name. DSPyEngine sends this bound as
+# `max_completion_tokens` instead (never both), so the output stays capped.
+MAX_COMPLETION_TOKENS = 4000
+
+# The crew makes three LLM calls (two in parallel, then the join).
+TRIAGE_TIMEOUT_SECONDS = 300
+
+# Concurrent turns per replica (1 CPU / 2 GiB). Further turns are answered with
+# rate_limit_exceeded instead of queueing or exhausting the container.
+MAX_ACTIVE_WORKFLOWS = 8
 
 
 @flock_type
@@ -72,84 +80,64 @@ class ActionPlan(BaseModel):
     comms_update: str = Field(min_length=10, description="One-paragraph status update.")
 
 
-def _engine_factory(
+# Every artifact the crew publishes is part of the public answer, in this order.
+PUBLIC_OUTPUTS = (ImpactAssessment, RootCauseHypothesis, ActionPlan)
+
+EngineBuilder = Callable[[WorkflowContext], EngineComponent]
+
+
+def dspy_engine_builder(
     *,
     model: str,
     api_base: str,
     api_version: str,
     token_provider: Callable[..., str],
-) -> Callable[[], DSPyEngine]:
-    """Return a factory producing one engine per agent.
+) -> EngineBuilder:
+    """Return a builder producing one engine per agent and workflow.
 
     Agents must not share an engine instance: ``Agent._resolve_engines`` mutates
-    engine attributes on the instances it is handed.
+    engine attributes on the instances it is handed. The token provider, by
+    contrast, is shared process-wide: LiteLLM caches its Azure client per
+    provider and the provider refreshes tokens itself.
     """
 
-    def build() -> DSPyEngine:
+    def build(context: WorkflowContext) -> DSPyEngine:
         return DSPyEngine(
             model=model,
-            # Engines only inherit the orchestrator's no_output at execution
-            # time; setting it here keeps result panels out of container logs
-            # from the first run.
             no_output=True,
-            # The handler emits whole artifacts rather than tokens, so per-token
+            # The adapter emits whole artifacts rather than tokens, so per-token
             # streaming buys nothing -- and LiteLLM's StreamWrapper breaks under
             # the hosting runtime's GenAI tracing instrumentation.
             stream=False,
+            max_completion_tokens=MAX_COMPLETION_TOKENS,
             lm_kwargs={
                 "api_base": api_base,
                 "api_version": api_version,
                 "azure_ad_token_provider": token_provider,
-                "additional_drop_params": DROPPED_LM_PARAMS,
+                # Correlates model calls with the Foundry request (not an auth key).
+                "extra_headers": foundry_headers(context),
             },
         )
 
     return build
 
 
-def build_flock(
-    *,
-    model_deployment: str,
-    api_base: str,
-    api_version: str,
-    token_provider: Callable[..., str] | None = None,
-    **flock_kwargs: Any,
-) -> Flock:
-    """Build the triage blackboard.
-
-    The Foundry account has local authentication disabled, so inference is
-    reached with the container's managed identity through LiteLLM's Azure AD
-    token provider hook rather than an API key.
-    """
-    model = f"azure/{model_deployment}"
-    provider = token_provider if token_provider is not None else get_default_azure_token_provider()
-    new_engine = _engine_factory(
-        model=model,
-        api_base=api_base,
-        api_version=api_version,
-        token_provider=provider,
-    )
-
-    flock = Flock(
-        model,
-        no_output=True,
-        context_provider=CorrelatedContextProvider(),
-        **flock_kwargs,
-    )
-
+def build_flock(context: WorkflowContext, *, model: str, new_engine: EngineBuilder) -> Flock:
+    """Build the triage blackboard for one workflow."""
+    flock = Flock(model, no_output=True)
     (
         flock.agent("impact_assessor")
         .description("Rates incident severity, affected scope, and user-visible impact.")
         .consumes(IncidentReport)
         .publishes(ImpactAssessment)
-        .with_engines(new_engine())
+        .with_engines(new_engine(context))
     )
     (
         flock.agent("root_cause_analyst")
         .description("Proposes the most probable root cause and the evidence behind it.")
         .consumes(IncidentReport)
         .publishes(RootCauseHypothesis)
-        .with_engines(new_engine())
+        .with_engines(new_engine(context))
     )
     # AND gate: two consumed types, so this agent waits for both publishers.
     (
@@ -157,7 +145,23 @@ def build_flock(
         .description("Turns an impact assessment and a root cause into an owned action plan.")
         .consumes(ImpactAssessment, RootCauseHypothesis)
         .publishes(ActionPlan)
-        .with_engines(new_engine())
+        .with_engines(new_engine(context))
     )
-
     return flock
+
+
+def build_application(*, model: str, new_engine: EngineBuilder, **options: Any) -> FlockApplication:
+    """The triage crew as a transport-independent Flock application.
+
+    All three artifacts are public and required: a turn succeeds only if both
+    parallel agents *and* the joining commander published.
+    """
+    options.setdefault("default_timeout", TRIAGE_TIMEOUT_SECONDS)
+    options.setdefault("max_active_workflows", MAX_ACTIVE_WORKFLOWS)
+    return FlockApplication(
+        factory=lambda context: build_flock(context, model=model, new_engine=new_engine),
+        input_type=IncidentReport,
+        output_types=PUBLIC_OUTPUTS,
+        required_output_types=PUBLIC_OUTPUTS,
+        **options,
+    )
