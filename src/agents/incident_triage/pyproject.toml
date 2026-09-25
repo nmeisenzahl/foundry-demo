@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest==9.1.1", "ruff==0.16.6"]
+dev = ["pytest==9.1.1", "ruff==0.16.7"]
 
 [tool.uv]
 # flock-core hard-pins opentelemetry api/sdk to 1.34.1, while every release of
