@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Local delivery for a versioned Microsoft Foundry prompt agent."
 requires-python = ">=3.11,<3.12"
 dependencies = [
-  "azure-ai-projects==2.6.1",
+  "azure-ai-projects==2.7.0",
   "azure-identity==1.25.3",
   "openai==3.14.1",
 ]
