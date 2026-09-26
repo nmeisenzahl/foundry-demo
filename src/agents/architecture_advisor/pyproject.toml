@@ -3,7 +3,7 @@ name = "foundry-demo-architecture-advisor"
 version = "0.1.0"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "agent-framework-core==1.18.0",
+    "agent-framework-core==1.19.0",
     "agent-framework-foundry==1.13.0",
     "agent-framework-foundry-hosting==1.0.0b260910",
     "azure-ai-agentserver-core==2.1.0",
