@@ -6,7 +6,7 @@ dependencies = [
     "flock-core[azure]==0.5.700",
     "azure-ai-agentserver-responses==2.1.0",
     "azure-ai-agentserver-core==2.1.0",
-    "azure-identity==1.25.3",
+    "azure-identity==1.26.0",
 ]
 
 [dependency-groups]
