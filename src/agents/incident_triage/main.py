@@ -49,7 +49,6 @@ FOUNDRY_SCOPE = "https://ai.azure.com/.default"
 TRIAGE_TIMEOUT_SECONDS = 300
 
 
-
 def max_active_workflows(environ: Mapping[str, str] = os.environ) -> int:
     """Concurrent workflows admitted per replica.
 

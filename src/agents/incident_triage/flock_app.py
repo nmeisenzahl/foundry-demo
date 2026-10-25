@@ -95,7 +95,8 @@ def dspy_engine_factory(
             max_retries=3,
             no_output=True,
             # Responses are streamed per artifact, not per token, so token
-            # streaming buys nothing.
+            # streaming buys nothing -- and LiteLLM's StreamWrapper breaks under
+            # the hosting runtime's GenAI tracing instrumentation.
             stream=False,
             lm_kwargs={
                 "api_base": api_base,
