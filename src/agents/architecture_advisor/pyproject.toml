@@ -8,7 +8,7 @@ dependencies = [
     "agent-framework-foundry-hosting==1.0.0b260910",
     "azure-ai-agentserver-core==2.2.0",
     "azure-identity==1.25.3",
-    "python-dotenv==1.2.3",
+    "python-dotenv==1.2.4",
 ]
 
 [dependency-groups]
