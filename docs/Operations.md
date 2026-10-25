@@ -359,13 +359,18 @@ there rather than in Application Insights traces.
    Services data actions; operators running the agent locally need the same
    account-scope grant, which `infra/rbac.tf` provisions for
    `operator_object_ids`.
-5. Delivery retries 401/403 smoke failures three times; allow several minutes
-   for RBAC propagation before redeploying if those retries are exhausted.
+5. Delivery retries transport-level 401/403 smoke failures (the Foundry
+   endpoint itself answering 401/403) three times; allow several minutes for
+   RBAC propagation before redeploying if those retries are exhausted. A model
+   auth failure inside `incident-triage` comes back as a `failed` response with
+   `agent_failed` and is not retried.
 
 Because Foundry creates the identity lazily, a brand-new hosted agent has no
-identity to grant until its first deployment has run. Expect the first
-deployment of a new agent to fail its smoke test, then record the identity and
-apply.
+identity to grant until its first deployment has run. For an agent that needs a
+grant to reach its model, expect the first deployment to fail its smoke test,
+then record the identity and apply. `incident-triage` should not need one for
+inference through the project endpoint, per the Flock Foundry guide; record its
+identity anyway so it gets the telemetry grant.
 
 ### Toolbox 401 or 403 Errors
 

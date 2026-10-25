@@ -235,20 +235,26 @@ background mode, cancellation, and graceful shutdown.
 - **Capacity.** At most `MAX_ACTIVE_WORKFLOWS` (default `4`) workflows run per
   replica; further requests fail immediately with `rate_limit_exceeded` instead
   of queueing. A workflow has 300 seconds to finish.
-- **Identity.** Requests must carry the gateway's `x-agent-user-id` header,
-  which Foundry sets. Outside Foundry, set `FLOCK_FOUNDRY_LOCAL_DEV=1`.
+- **Identity.** `IdentityPolicy(required=False)`: the app partitions nothing
+  by principal (stateless turns, public outputs), so a request without the
+  gateway's `x-agent-user-id` header runs with no principal instead of being
+  rejected. Outside Foundry the header is only trusted with
+  `FLOCK_FOUNDRY_LOCAL_DEV=1`, which the adapter refuses inside a hosted
+  container.
 - **Telemetry.** The Foundry host configures OpenTelemetry. `FLOCK_AUTO_TRACE`
   is `false` in the image and in `main.py`, so Flock does not install its own
   tracer provider first.
-- **No crash recovery.** Resilient background tasks stay disabled: Flock does
-  not checkpoint a running workflow, so a response interrupted by a hard crash
-  stays `in_progress` and has to be resubmitted.
+- **No crash recovery.** Resilient background tasks are disabled: the previous
+  runtime called `set_resilient_tasks_enabled(True)`, but the SDK's crash
+  recovery assumes work it can resume, and Flock does not checkpoint a running
+  workflow. A response interrupted by a hard crash stays `in_progress` and has
+  to be resubmitted.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `MAX_ACTIVE_WORKFLOWS` | `4` | Concurrent workflows admitted per replica |
 | `MAX_COMPLETION_TOKENS` | `4000` | Output-token cap per model call |
-| `FLOCK_FOUNDRY_LOCAL_DEV` | unset | `1` accepts requests without the gateway identity header; refused inside Foundry |
+| `FLOCK_FOUNDRY_LOCAL_DEV` | unset | `1` trusts the identity header outside Foundry and assigns a local principal; refused inside Foundry |
 
 ### Model Access
 
@@ -268,11 +274,13 @@ That identity is **not** the project's managed identity. Foundry mints a
 per-agent identity when the agent is first created and runs the container as it,
 so the container inherits none of the project's access. Per the
 [Flock Foundry guide](https://github.com/whiteducksoftware/flock/blob/0.5.700/docs/guides/foundry.md),
-project-endpoint inference needs no extra role for that identity. The
-account-scope `Foundry User` grant from `infra/rbac.tf` stays in place
-regardless, together with `Monitoring Metrics Publisher` on Application
-Insights. Record the identity's object ID in `hosted_agent_object_ids`
-(`infra/env/dev.tfvars`) so both are provisioned:
+project-endpoint inference needs no extra role for that identity, so the first
+deployment should not need a grant to reach the model. Two grants are still
+provisioned: `Monitoring Metrics Publisher` on Application Insights for
+telemetry, and the account-scope `Foundry User` role, which covers the
+account-endpoint path and is the fallback if the guide's claim does not hold
+for your project. Record the identity's object ID in `hosted_agent_object_ids`
+(`infra/env/dev.tfvars`) so `infra/rbac.tf` provisions both:
 
 ```bash
 az ad sp list \
@@ -281,7 +289,8 @@ az ad sp list \
 ```
 
 The identity does not exist until the agent has been deployed once. See
-[Operations](Operations.md) for the symptom and the one-off unblock.
+[Operations](Operations.md) for the symptom if inference is denied and the
+one-off unblock.
 
 Two runtime details are load-bearing and easy to lose:
 
@@ -290,8 +299,14 @@ Two runtime details are load-bearing and easy to lose:
   never fires. `DSPyEngine(max_completion_tokens=...)` sends
   `max_completion_tokens` instead and never sends `max_tokens`. The cap comes
   from `MAX_COMPLETION_TOKENS`.
-- Flock-level token streaming is disabled. The adapter streams whole artifacts,
-  so per-token streaming buys nothing.
+- Flock-level token streaming is disabled (`stream=False`). LiteLLM's
+  `StreamWrapper` broke in production under the hosting runtime's GenAI
+  tracing instrumentation, which the Foundry host still installs. The adapter
+  streams whole artifacts anyway, so per-token streaming buys nothing.
+
+Each engine retries a failed model call three times (`max_retries=3`), and DSPy
+falls back to a second prompt adapter when a call fails, so a permanent 4xx such
+as a missing role costs several model calls per agent before the agent fails.
 
 ### Deploy
 
@@ -305,10 +320,11 @@ uv run deploy-agent incident-triage
 ```
 
 As with `architecture-advisor`, Foundry provisions the agent's managed identity
-only after the first hosted version exists. Grant that identity
-`Monitoring Metrics Publisher` on Application Insights and, matching
-`infra/rbac.tf`, the `Foundry User` role on the Foundry **account**, then
-redeploy:
+only after the first hosted version exists. Inference through the project
+endpoint should work without a grant (see [Model Access](#model-access)), so
+the first deployment should not fail on model access. Record the identity as
+described above so Terraform provisions the retained grants, or grant them
+directly, matching `infra/rbac.tf`:
 
 ```bash
 APPI_ID="$(terraform -chdir=infra output -raw application_insights_id)"
@@ -330,8 +346,9 @@ az role assignment create \
   --scope "$ACCOUNT_ID"
 ```
 
-An account-scope assignment inherits down to the project, so it covers the
-project endpoint too. `infra/rbac.tf` provisions the same grant for
+`Monitoring Metrics Publisher` lets the container export telemetry. The
+account-scope `Foundry User` assignment inherits down to the project, so it
+covers both endpoints if project-endpoint inference turns out to need a role. `infra/rbac.tf` provisions the same grant for
 `operator_object_ids` so operators can run the agent locally.
 
 ### Resource Tier
@@ -363,7 +380,7 @@ operator grant described above. Then:
 
 ```bash
 cd src/agents/incident_triage
-FLOCK_FOUNDRY_LOCAL_DEV=1 uv run python main.py
+uv run python main.py
 
 # In a second shell:
 curl -s -o /dev/null -w '%{http_code}\n' localhost:8088/readiness
@@ -463,9 +480,7 @@ export AZURE_AI_MODEL_DEPLOYMENT_NAME="$(
 uv run python main.py
 ```
 
-`incident-triage` additionally needs `FLOCK_FOUNDRY_LOCAL_DEV=1`, because it
-otherwise rejects requests without the Foundry gateway's identity header; see
-[Run Locally](#run-locally) for the request to send.
+For `incident-triage`, see [Run Locally](#run-locally) for the request to send.
 
 Each hosted project has its own `pyproject.toml`, `uv.lock`, `Dockerfile`, and
 `.dockerignore`, and selects a single root-level test file:
