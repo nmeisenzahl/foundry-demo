@@ -160,11 +160,6 @@ def test_commander_declares_an_and_gate_over_both_analyses() -> None:
     assert published == {type_registry.name_for(flock_app.ActionPlan)}
 
 
-def test_each_workflow_gets_a_fresh_blackboard() -> None:
-    """FlockApplication rejects a reused instance; the factory must build anew."""
-    assert _build() is not _build()
-
-
 # -- model engines ----------------------------------------------------------
 
 
@@ -261,8 +256,14 @@ def test_application_exposes_all_three_artifacts_and_requires_the_plan() -> None
         flock_app.ActionPlan,
     )
     assert contract.required_output_types == (flock_app.ActionPlan,)
-    assert main.application.admission.limit == main.MAX_ACTIVE_WORKFLOWS == 4
+    assert main.application.admission.limit == main.MAX_ACTIVE_WORKFLOWS
     assert main.application.default_timeout == 300
+
+
+def test_max_active_workflows_defaults_to_four_and_reads_the_environment() -> None:
+    assert main.max_active_workflows({}) == 4
+    assert main.max_active_workflows({"MAX_ACTIVE_WORKFLOWS": "9"}) == 9
+    assert main.build_application(max_active_workflows=2).admission.limit == 2
 
 
 def test_module_exposes_the_adapter_as_the_asgi_app() -> None:
@@ -301,6 +302,37 @@ def test_offline_cascade_publishes_all_three_artifacts() -> None:
             type_registry.name_for(flock_app.RootCauseHypothesis),
         ]
     )
+
+
+def test_back_to_back_workflows_each_get_their_own_blackboard() -> None:
+    """One application serves many requests; nothing leaks between workflows.
+
+    The old runtime shared one blackboard and serialized turns; here every
+    workflow is built fresh, so the second run must see only its own artifacts.
+    """
+    built_for: list[str] = []
+
+    def engine_factory(context: WorkflowContext) -> EngineComponent:
+        built_for.append(context.workflow_id)
+        return OfflineEngine()
+
+    application = main.build_application(engine_factory=engine_factory)
+
+    async def exercise():
+        report = flock_app.IncidentReport(raw_report=REPORT)
+        first = await application.run(report, context=_context("wf-1"))
+        second = await application.run(report, context=_context("wf-2"))
+        return first, second
+
+    first, second = asyncio.run(exercise())
+
+    for result, workflow_id in ((first, "wf-1"), (second, "wf-2")):
+        assert result.status == "succeeded", result
+        assert len(result.outputs) == 3
+        assert {event.artifact.correlation_id for event in result.outputs} == {workflow_id}
+    # Three engines (one per agent) per workflow, after the contract probe.
+    assert built_for.count("wf-1") == 3
+    assert built_for.count("wf-2") == 3
 
 
 def test_a_failing_agent_fails_the_workflow_and_logs_the_cause(capfd) -> None:
@@ -382,14 +414,32 @@ def test_http_agent_failure_is_a_safe_failure_code() -> None:
     assert "model deployment unavailable" not in json.dumps(body)
 
 
-def test_http_requires_the_gateway_identity_outside_local_development() -> None:
-    """Without FLOCK_FOUNDRY_LOCAL_DEV=1 a direct call has no trusted principal."""
-    host = _offline_host(
-        main.build_application(engine_factory=_offline()), identity=IdentityPolicy()
-    )
+def test_http_default_identity_does_not_require_the_gateway_header(monkeypatch) -> None:
+    """Nothing is partitioned by principal, so a missing x-agent-user-id is fine.
+
+    A strict policy would fail any caller whose request arrives without the
+    header, such as a service-principal smoke call, for no isolation benefit.
+    """
+    monkeypatch.delenv("FLOCK_FOUNDRY_LOCAL_DEV", raising=False)
+    host = _offline_host(main.build_application(engine_factory=_offline()), identity=None)
 
     with TestClient(host.app) as client:
         body = client.post("/responses", json={"input": REPORT}).json()
 
-    assert body["status"] == "failed"
-    assert body["error"]["code"] == "invalid_prompt"
+    assert body["status"] == "completed", body
+    assert len(_message_texts(body)) == 3
+
+
+def test_http_readiness_is_unavailable_without_the_model_deployment(monkeypatch) -> None:
+    """The contract probe builds the real engines, so missing config shows up here."""
+    monkeypatch.setenv("FOUNDRY_PROJECT_ENDPOINT", PROJECT_ENDPOINT)
+    monkeypatch.delenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", raising=False)
+    main.model_engine_factory.cache_clear()
+    try:
+        host = _offline_host(main.build_application())
+        with TestClient(host.app) as client:
+            readiness = client.get("/readiness")
+    finally:
+        main.model_engine_factory.cache_clear()
+
+    assert readiness.status_code == 503

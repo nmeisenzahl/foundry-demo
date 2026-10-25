@@ -15,6 +15,7 @@ import os
 # Let the Foundry host own OpenTelemetry: must be set before importing flock.
 os.environ.setdefault("FLOCK_AUTO_TRACE", "false")
 
+from collections.abc import Mapping  # noqa: E402
 from functools import cache  # noqa: E402
 from typing import Any  # noqa: E402
 
@@ -47,9 +48,18 @@ FOUNDRY_SCOPE = "https://ai.azure.com/.default"
 # deadline is generous relative to a single completion.
 TRIAGE_TIMEOUT_SECONDS = 300
 
-# Every request builds its own blackboard and runs three model calls. Requests
-# beyond this bound are answered with `rate_limit_exceeded` instead of queueing.
-MAX_ACTIVE_WORKFLOWS = int(os.environ.get("MAX_ACTIVE_WORKFLOWS", "4"))
+
+
+def max_active_workflows(environ: Mapping[str, str] = os.environ) -> int:
+    """Concurrent workflows admitted per replica.
+
+    Every request builds its own blackboard and runs three model calls. Requests
+    beyond this bound are answered with `rate_limit_exceeded` instead of queueing.
+    """
+    return int(environ.get("MAX_ACTIVE_WORKFLOWS", "4"))
+
+
+MAX_ACTIVE_WORKFLOWS = max_active_workflows()
 
 
 @cache
@@ -106,16 +116,16 @@ def build_host(
     identity: IdentityPolicy | None = None,
     **adapter_kwargs: Any,
 ) -> FoundryResponsesAdapter:
-    """Expose ``application`` over the Foundry Responses protocol.
-
-    Inside Foundry the gateway sets ``x-agent-user-id``; set
-    ``FLOCK_FOUNDRY_LOCAL_DEV=1`` to run without it locally.
-    """
+    """Expose ``application`` over the Foundry Responses protocol."""
     if identity is None:
         identity = IdentityPolicy(
-            local_development=os.environ.get("FLOCK_FOUNDRY_LOCAL_DEV") == "1"
+            # Nothing is partitioned by principal: turns are stateless and every
+            # output is public. A request without `x-agent-user-id` therefore
+            # runs with principal_id=None instead of being rejected.
+            required=False,
+            # Trust the header outside Foundry only for explicit local runs.
+            local_development=os.environ.get("FLOCK_FOUNDRY_LOCAL_DEV") == "1",
         )
-    adapter_kwargs.setdefault("observability", "sdk")
     return FoundryResponsesAdapter(
         application,
         history_mode="stateless",

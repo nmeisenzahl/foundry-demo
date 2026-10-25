@@ -331,11 +331,7 @@ def test_failed_response_reports_the_error_it_carries() -> None:
         output=[],
         error=DummyError(
             code="server_error",
-            message=(
-                "Blackboard produced no ImpactAssessment; the triage cascade did not "
-                "complete (impact_assessor: AuthenticationError: Principal does not "
-                "have access to API/Operation.)."
-            ),
+            message="agent_failed: An agent failed while processing the workflow.",
         ),
     )
 
@@ -349,7 +345,7 @@ def test_failed_response_reports_the_error_it_carries() -> None:
     message = str(exc_info.value)
     assert "Response status is 'failed'" in message
     assert "Error server_error:" in message
-    assert "Principal does not have access to API/Operation." in message
+    assert "agent_failed: An agent failed while processing the workflow." in message
 
 
 def test_response_without_an_error_payload_reports_status_alone() -> None:
