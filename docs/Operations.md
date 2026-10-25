@@ -298,9 +298,11 @@ candidates remain available for diagnosis, but traffic is not intentionally
 promoted to them.
 
 For `incident-triage`, smoke requires at least three `message` output items.
-The hosted runtime emits exactly one per published blackboard artifact, so three
+The Flock Foundry adapter streams exactly one per public artifact, so three
 items can only exist if both parallel agents and the joining commander
-published. A partial cascade produces fewer and fails the gate.
+published. A partial cascade produces fewer and fails the gate. If an agent
+failed, the response itself is `failed` with `agent_failed: ...` in its error
+message; the exception is only in the container log (see below).
 
 For `architecture-advisor`, smoke requires:
 - Completed named `load_skill` setup call.
@@ -317,14 +319,20 @@ exposed as `instance_identity.principal_id` on the agent resource and named
 calls on its own behalf inherits the project's access, so that identity needs
 its own role assignment.
 
-`incident-triage` calls model inference directly rather than through the Agents
-API, using scope `https://cognitiveservices.azure.com/.default` against the
-account endpoint. A project-scope assignment does not inherit upward to the
-account, so the grant has to sit on the account.
+`incident-triage` calls model inference through the Foundry project endpoint
+(`<FOUNDRY_PROJECT_ENDPOINT>/openai/v1`) with scope
+`https://ai.azure.com/.default`. Per the Flock Foundry guide that path needs no
+extra role for the agent identity, but the account-scope grant below remains
+the supported configuration and inherits down to the project.
 
-The symptom is a smoke failure like `Response status is 'failed' ... Error
-server_error: Blackboard produced no ImpactAssessment ... (impact_assessor:
-AuthenticationError: Principal does not have access to API/Operation.)`.
+The response carries only a safe failure code: smoke fails with
+`Response status is 'failed' ... Error server_error: agent_failed: An agent
+failed while processing the workflow.` The cause is in the container log, where
+Flock logs the failing agent and the exception, for example
+`Agent 'impact_assessor' failed (...): litellm.AuthenticationError: ...
+Principal does not have access to API/Operation.` Flock writes these lines to
+the container's console output rather than through Python logging, so look
+there rather than in Application Insights traces.
 
 1. Read the agent identity's object ID:
 
@@ -351,13 +359,18 @@ AuthenticationError: Principal does not have access to API/Operation.)`.
    Services data actions; operators running the agent locally need the same
    account-scope grant, which `infra/rbac.tf` provisions for
    `operator_object_ids`.
-5. Delivery retries 401/403 smoke failures three times; allow several minutes
-   for RBAC propagation before redeploying if those retries are exhausted.
+5. Delivery retries transport-level 401/403 smoke failures (the Foundry
+   endpoint itself answering 401/403) three times; allow several minutes for
+   RBAC propagation before redeploying if those retries are exhausted. A model
+   auth failure inside `incident-triage` comes back as a `failed` response with
+   `agent_failed` and is not retried.
 
 Because Foundry creates the identity lazily, a brand-new hosted agent has no
-identity to grant until its first deployment has run. Expect the first
-deployment of a new agent to fail its smoke test, then record the identity and
-apply.
+identity to grant until its first deployment has run. For an agent that needs a
+grant to reach its model, expect the first deployment to fail its smoke test,
+then record the identity and apply. `incident-triage` should not need one for
+inference through the project endpoint, per the Flock Foundry guide; record its
+identity anyway so it gets the telemetry grant.
 
 ### Toolbox 401 or 403 Errors
 

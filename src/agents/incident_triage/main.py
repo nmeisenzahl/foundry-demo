@@ -1,129 +1,107 @@
 """Incident triage hosted behind the Foundry Responses protocol, powered by Flock.
 
-One HTTP turn drives one blackboard run: the caller's free text is published as
-an :class:`~flock_app.IncidentReport`, Flock cascades it through the triage crew,
-and each artifact the crew produced is returned as its own Responses output item
-so the multi-agent flow is visible to the caller rather than collapsed into prose.
+Every Responses request runs as its own isolated Flock workflow: the caller's
+free text becomes an :class:`~flock_app.IncidentReport`, a fresh blackboard
+cascades it through the triage crew, and each artifact the crew produced is
+streamed as its own Responses output item, so the multi-agent flow is visible to
+the caller rather than collapsed into prose.
+
+HTTP, SSE, background mode, cancellation, readiness and shutdown are owned by
+Flock's ``FoundryResponsesAdapter`` on top of the official agentserver SDK.
 """
 
-import asyncio
-import logging
 import os
 
-os.environ.setdefault("AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING", "true")
+# Let the Foundry host own OpenTelemetry: must be set before importing flock.
+os.environ.setdefault("FLOCK_AUTO_TRACE", "false")
 
-from azure.ai.agentserver.core.tasks import set_resilient_tasks_enabled
-from azure.ai.agentserver.responses import (
-    CreateResponse,
-    ResponseContext,
-    ResponseEventStream,
-    ResponsesAgentServerHost,
-)
-from dotenv import load_dotenv
-from flock import Flock
-from flock.models.system_artifacts import WorkflowError
-from pydantic import BaseModel
+from collections.abc import Mapping  # noqa: E402
+from functools import cache  # noqa: E402
+from typing import Any  # noqa: E402
 
-from flock_app import (
+from flock import FlockApplication, WorkflowContext  # noqa: E402
+from flock.engines.auth.azure import get_default_azure_token_provider  # noqa: E402
+from flock.integrations.foundry import FoundryResponsesAdapter, IdentityPolicy  # noqa: E402
+from flock.logging.logging import configure_logging  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
+
+from flock_app import (  # noqa: E402
     ActionPlan,
+    EngineFactory,
     ImpactAssessment,
     IncidentReport,
     RootCauseHypothesis,
     build_flock,
+    dspy_engine_factory,
 )
-from model_endpoint import resolve_api_base, resolve_api_version
 
-logging.basicConfig(level=logging.INFO)
-LOGGER = logging.getLogger("incident-triage")
+# With auto-tracing off, Flock's loggers default to ERROR, which would hide the
+# adapter's warnings, such as why /readiness answers 503. Agent failures are
+# logged at ERROR, with the exception, either way.
+configure_logging(flock_level="WARNING", external_level="WARNING")
 
-set_resilient_tasks_enabled(True)
+# Project-endpoint inference (`<FOUNDRY_PROJECT_ENDPOINT>/openai/v1`) takes a
+# token for the Foundry audience, not the Cognitive Services one.
+FOUNDRY_SCOPE = "https://ai.azure.com/.default"
 
-# The crew makes three sequential-ish LLM calls (two in parallel, then the join),
-# so the cap is generous relative to a single completion.
+# The crew makes three LLM calls (two in parallel, then the join), so the
+# deadline is generous relative to a single completion.
 TRIAGE_TIMEOUT_SECONDS = 300
 
-app = ResponsesAgentServerHost()
 
-_flock: Flock | None = None
-_BUILD_LOCK = asyncio.Lock()
-# run_until_idle() waits on every scheduled task in the process, not just this
-# turn's cascade, so turns are serialized. CorrelatedContextProvider already
-# isolates what each agent *sees*; this lock is what makes the *wait*
-# deterministic. Throughput is traded for correctness, which is the right call
-# for a demo agent.
-_TURN_LOCK = asyncio.Lock()
+def max_active_workflows(environ: Mapping[str, str] = os.environ) -> int:
+    """Concurrent workflows admitted per replica.
 
-
-async def get_flock() -> Flock:
-    """Return the process-wide blackboard, building it on first use."""
-    global _flock
-    async with _BUILD_LOCK:
-        if _flock is None:
-            load_dotenv(override=False)
-            _flock = build_flock(
-                model_deployment=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-                api_base=resolve_api_base(),
-                api_version=resolve_api_version(),
-            )
-            LOGGER.info("Flock blackboard initialized with %d agents", len(_flock.agents))
-    return _flock
-
-
-class TriageError(RuntimeError):
-    """The cascade ended without producing the full artifact set."""
-
-
-def describe_workflow_errors(errors: list[WorkflowError]) -> str:
-    """Summarise why agents dropped out of a cascade.
-
-    Flock does not propagate an agent failure to the caller: it publishes a
-    WorkflowError artifact and lets the orchestrator go idle. Without this the
-    only symptom is a missing artifact, which says nothing about the cause.
+    Every request builds its own blackboard and runs three model calls. Requests
+    beyond this bound are answered with `rate_limit_exceeded` instead of queueing.
     """
-    if not errors:
-        return "no agent reported an error"
-    return "; ".join(
-        f"{error.failed_agent}: {error.error_type}: {error.error_message}"
-        for error in errors
+    return int(environ.get("MAX_ACTIVE_WORKFLOWS", "4"))
+
+
+MAX_ACTIVE_WORKFLOWS = max_active_workflows()
+
+
+@cache
+def model_engine_factory() -> EngineFactory:
+    """Return the engine factory backed by the Foundry project's model.
+
+    Resolved on first use, not at import, so the module imports without Azure
+    configuration. Cached, so the token provider (and its credential) is created
+    once per process and shared by every workflow. A missing variable fails the
+    contract check behind ``GET /readiness`` and is logged there.
+    """
+    return dspy_engine_factory(
+        model=f"azure/{os.environ['AZURE_AI_MODEL_DEPLOYMENT_NAME']}",
+        api_base=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        token_provider=get_default_azure_token_provider(scopes=(FOUNDRY_SCOPE,)),
+        max_completion_tokens=int(os.environ.get("MAX_COMPLETION_TOKENS", "4000")),
     )
 
 
-def _require_one(
-    artifacts: list[BaseModel],
+def build_application(
     *,
-    artifact_type: type[BaseModel],
-    errors: list[WorkflowError],
-) -> BaseModel:
-    if not artifacts:
-        raise TriageError(
-            f"Blackboard produced no {artifact_type.__name__}; the triage cascade "
-            f"did not complete ({describe_workflow_errors(errors)})."
-        )
-    return artifacts[-1]
+    engine_factory: EngineFactory | None = None,
+    max_active_workflows: int = MAX_ACTIVE_WORKFLOWS,
+) -> FlockApplication:
+    """Build the application; ``engine_factory`` defaults to the Foundry model."""
 
+    def factory(context: WorkflowContext):
+        return build_flock(
+            context,
+            engine_factory=engine_factory or model_engine_factory(),
+        )
 
-async def run_triage(raw_report: str, *, correlation_id: str) -> list[BaseModel]:
-    """Publish one report and collect the three artifacts its cascade produced."""
-    flock = await get_flock()
-    async with _TURN_LOCK:
-        await flock.publish(
-            IncidentReport(raw_report=raw_report),
-            correlation_id=correlation_id,
-        )
-        await flock.run_until_idle(timeout=TRIAGE_TIMEOUT_SECONDS)
-        collected = [
-            await flock.store.get_by_type(artifact_type, correlation_id=correlation_id)
-            for artifact_type in (ImpactAssessment, RootCauseHypothesis, ActionPlan)
-        ]
-        errors = await flock.store.get_by_type(WorkflowError, correlation_id=correlation_id)
-    return [
-        _require_one(artifacts, artifact_type=artifact_type, errors=errors)
-        for artifacts, artifact_type in zip(
-            collected,
-            (ImpactAssessment, RootCauseHypothesis, ActionPlan),
-            strict=True,
-        )
-    ]
+    return FlockApplication(
+        factory=factory,
+        input_type=IncidentReport,
+        # All three artifacts are public outputs, streamed one item each.
+        output_types=(ImpactAssessment, RootCauseHypothesis, ActionPlan),
+        # The AND gate means an ActionPlan implies both analyses; without one
+        # the workflow fails even if no agent raised.
+        required_output_types=(ActionPlan,),
+        default_timeout=TRIAGE_TIMEOUT_SECONDS,
+        max_active_workflows=max_active_workflows,
+    )
 
 
 def format_artifact(artifact: BaseModel) -> str:
@@ -131,40 +109,36 @@ def format_artifact(artifact: BaseModel) -> str:
     return f"{type(artifact).__name__}\n{artifact.model_dump_json(indent=2)}"
 
 
-@app.response_handler
-async def handler(
-    request: CreateResponse,
-    context: ResponseContext,
-    cancellation_signal: asyncio.Event,
-):
-    """Run the blackboard once and emit one output item per artifact."""
-    # Everything that can fail runs *after* response.created. A handler that
-    # raises before the first event leaves the host with no response to fail,
-    # so it answers HTTP 500 with a generic body and the real cause survives
-    # only in the container log. Emitting first turns the same failure into a
-    # response.failed the caller can read.
-    stream = ResponseEventStream(response_id=context.response_id, request=request)
-    yield stream.emit_created()
-    yield stream.emit_in_progress()
-    try:
-        raw_report = await context.get_input_text()
-        artifacts = await run_triage(raw_report, correlation_id=context.response_id)
-    except Exception as exc:
-        LOGGER.exception("Triage cascade failed")
-        yield stream.emit_failed(message=str(exc))
-        return
-    for artifact in artifacts:
-        if cancellation_signal.is_set():
-            break
-        for event in stream.output_item_message(format_artifact(artifact)):
-            yield event
-    yield stream.emit_completed()
+def build_host(
+    application: FlockApplication,
+    *,
+    identity: IdentityPolicy | None = None,
+    **adapter_kwargs: Any,
+) -> FoundryResponsesAdapter:
+    """Expose ``application`` over the Foundry Responses protocol."""
+    if identity is None:
+        identity = IdentityPolicy(
+            # Nothing is partitioned by principal: turns are stateless and every
+            # output is public. A request without `x-agent-user-id` therefore
+            # runs with principal_id=None instead of being rejected.
+            required=False,
+            # Trust the header outside Foundry only for explicit local runs.
+            local_development=os.environ.get("FLOCK_FOUNDRY_LOCAL_DEV") == "1",
+        )
+    return FoundryResponsesAdapter(
+        application,
+        history_mode="stateless",
+        input_mapper=lambda turn: IncidentReport(raw_report=turn.text),
+        output_mapper=format_artifact,
+        identity=identity,
+        **adapter_kwargs,
+    )
 
 
-def main() -> None:
-    LOGGER.info("Starting incident-triage Responses server on port 8088")
-    app.run()
+application = build_application()
+host = build_host(application)
+app = host.app  # ASGI entry point; serve it as the root app.
 
 
 if __name__ == "__main__":
-    main()
+    host.run()

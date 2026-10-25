@@ -11,7 +11,7 @@ release records, and endpoint promotion.
 | --- | --- | --- | --- | --- |
 | `research-assistant` | Prompt | Web Search with citation validation | [`src/agents/research_assistant/`](src/agents/research_assistant/) | [Add a Prompt Agent](docs/Agents.md#add-a-prompt-agent) |
 | `architecture-advisor` | Hosted | Microsoft Agent Framework container with Foundry Toolbox (Microsoft Learn MCP and an architecture decision brief skill) | [`src/agents/architecture_advisor/`](src/agents/architecture_advisor/) | [Deploy the Hosted Agent](docs/Agents.md#deploy-the-hosted-agent) |
-| `incident-triage` | Hosted | [Flock](https://github.com/whiteducksoftware/flock) blackboard running a three-agent triage crew with no external tools | [`src/agents/incident_triage/`](src/agents/incident_triage/) | [Deploy the Flock Hosted Agent](docs/Agents.md#deploy-the-flock-hosted-agent) |
+| `incident-triage` | Hosted | [Flock](https://github.com/whiteducksoftware/flock) blackboard running a three-agent triage crew with no external tools, hosted through Flock's Foundry Responses adapter as one isolated workflow per request | [`src/agents/incident_triage/`](src/agents/incident_triage/) | [Deploy the Flock Hosted Agent](docs/Agents.md#deploy-the-flock-hosted-agent) |
 | `release-notes-writer` | Prompt | An admin-connected model served through [Token Control](https://tokencontrol.ai/), white duck's FinOps and governance gateway | [`src/agents/release_notes_writer/`](src/agents/release_notes_writer/) | [Deploy the Connected-Model Prompt Agent](docs/Agents.md#deploy-the-connected-model-prompt-agent) |
 
 `release-notes-writer` needs a Token Control tenant and API key; see

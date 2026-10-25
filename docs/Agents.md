@@ -206,25 +206,81 @@ Flock treats as an AND gate and fires once, after both have published. No edges
 are declared anywhere in `flock_app.py` -- the topology is a consequence of the
 Pydantic contracts.
 
-One HTTP turn drives one blackboard run. The handler publishes the caller's text
-as an `IncidentReport` under a correlation ID, waits for the cascade, and emits
-each resulting artifact as its own Responses output item. That makes the
-multi-agent flow visible to callers and gives smoke validation something to
-assert: three output items can only exist if the full cascade completed.
+### Hosting Model
+
+`main.py` wraps the crew in a `FlockApplication` and serves it through Flock's
+`FoundryResponsesAdapter` (`flock.integrations.foundry`), which sits on the
+official `azure-ai-agentserver-responses` host. The adapter owns HTTP, SSE,
+background mode, cancellation, and graceful shutdown.
+
+- **One isolated workflow per request.** The `response_id` becomes the workflow
+  ID, and `build_flock(context, ...)` builds a fresh blackboard for it. There is
+  no shared blackboard and no turn lock, so requests run concurrently.
+- **Stateless turns.** `history_mode="stateless"`: the request text becomes an
+  `IncidentReport`; earlier conversation turns are not loaded.
+- **Three public outputs.** `ImpactAssessment`, `RootCauseHypothesis`, and
+  `ActionPlan` are the application's `output_types`. Each is streamed as its own
+  Responses message item as soon as it is published, rendered as the type name
+  followed by its JSON. `ActionPlan` is the required output: a workflow that
+  ends without one fails. Three message items can only exist if the full
+  cascade completed, which is what smoke validation asserts.
+- **Safe failures.** An agent failure ends the response as `failed` with
+  `server_error` and the message `agent_failed: ...`; exception text never
+  reaches the caller. Flock logs the failing agent and the exception to the
+  container log.
+- **Readiness.** `GET /readiness` returns 503 until the application has
+  validated its contract (on the first probe), and again while it drains on
+  `SIGTERM`. A missing `FOUNDRY_PROJECT_ENDPOINT` or
+  `AZURE_AI_MODEL_DEPLOYMENT_NAME` keeps the replica unready and is logged.
+- **Capacity.** At most `MAX_ACTIVE_WORKFLOWS` (default `4`) workflows run per
+  replica; further requests fail immediately with `rate_limit_exceeded` instead
+  of queueing. A workflow has 300 seconds to finish.
+- **Identity.** `IdentityPolicy(required=False)`: the app partitions nothing
+  by principal (stateless turns, public outputs), so a request without the
+  gateway's `x-agent-user-id` header runs with no principal instead of being
+  rejected. Outside Foundry the header is only trusted with
+  `FLOCK_FOUNDRY_LOCAL_DEV=1`, which the adapter refuses inside a hosted
+  container.
+- **Telemetry.** The Foundry host configures OpenTelemetry. `FLOCK_AUTO_TRACE`
+  is `false` in the image and in `main.py`, so Flock does not install its own
+  tracer provider first.
+- **No crash recovery.** Resilient background tasks are disabled: the previous
+  runtime called `set_resilient_tasks_enabled(True)`, but the SDK's crash
+  recovery assumes work it can resume, and Flock does not checkpoint a running
+  workflow. A response interrupted by a hard crash stays `in_progress` and has
+  to be resubmitted.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MAX_ACTIVE_WORKFLOWS` | `4` | Concurrent workflows admitted per replica |
+| `MAX_COMPLETION_TOKENS` | `4000` | Output-token cap per model call |
+| `FLOCK_FOUNDRY_LOCAL_DEV` | unset | `1` trusts the identity header outside Foundry and assigns a local principal; refused inside Foundry |
 
 ### Model Access
 
 The Foundry account sets `local_auth_enabled = false`, so there are no API keys.
 Flock reaches the model through DSPy and LiteLLM, authenticating with the
-container's managed identity via LiteLLM's `azure_ad_token_provider` hook
-(`flock.engines.auth.azure.get_default_azure_token_provider`).
+container's managed identity via LiteLLM's `azure_ad_token_provider` hook.
+
+Calls go to the Foundry **project** endpoint, as the official samples do:
+`api_base` is the injected `FOUNDRY_PROJECT_ENDPOINT` and `api_version` is
+`v1`, so LiteLLM calls `<FOUNDRY_PROJECT_ENDPOINT>/openai/v1`. The token
+provider (`get_default_azure_token_provider`) requests scope
+`https://ai.azure.com/.default`; it is created once per process and shared by
+every workflow. Each model call also forwards the request's
+`x-agent-foundry-call-id`.
 
 That identity is **not** the project's managed identity. Foundry mints a
 per-agent identity when the agent is first created and runs the container as it,
-so the container inherits none of the project's access. Record its object ID in
-`hosted_agent_object_ids` (`infra/env/dev.tfvars`) so `infra/rbac.tf` grants it
-`Foundry User` on the account and `Monitoring Metrics Publisher` on Application
-Insights:
+so the container inherits none of the project's access. Per the
+[Flock Foundry guide](https://github.com/whiteducksoftware/flock/blob/0.5.700/docs/guides/foundry.md),
+project-endpoint inference needs no extra role for that identity, so the first
+deployment should not need a grant to reach the model. Two grants are still
+provisioned: `Monitoring Metrics Publisher` on Application Insights for
+telemetry, and the account-scope `Foundry User` role, which covers the
+account-endpoint path and is the fallback if the guide's claim does not hold
+for your project. Record the identity's object ID in `hosted_agent_object_ids`
+(`infra/env/dev.tfvars`) so `infra/rbac.tf` provisions both:
 
 ```bash
 az ad sp list \
@@ -232,27 +288,25 @@ az ad sp list \
   --query "[0].id" -o tsv
 ```
 
-The identity does not exist until the agent has been deployed once, so a new
-hosted agent fails its first smoke test, then needs its ID recorded and one
-`terraform apply`. See [Operations](Operations.md) for the symptom and the
+The identity does not exist until the agent has been deployed once. See
+[Operations](Operations.md) for the symptom if inference is denied and the
 one-off unblock.
 
 Two runtime details are load-bearing and easy to lose:
 
-- LiteLLM cannot infer a model family from an Azure *deployment* name, so its
-  parameter mapping never fires. Current Foundry chat models reject
-  `max_tokens`, which `DSPyEngine` always sends, so the agent passes
-  `additional_drop_params=["max_tokens"]`. `DSPyEngine` reserves
-  `max_completion_tokens` without ever setting it, so no replacement cap can be
-  supplied and the model's default output limit applies.
-- Flock-level token streaming is disabled. The handler emits whole artifacts
-  rather than tokens, and LiteLLM's `StreamWrapper` fails under the hosting
-  runtime's GenAI tracing instrumentation.
+- Current Foundry chat models reject `max_tokens`, and LiteLLM cannot infer a
+  model family from an Azure *deployment* name, so its own parameter mapping
+  never fires. `DSPyEngine(max_completion_tokens=...)` sends
+  `max_completion_tokens` instead and never sends `max_tokens`. The cap comes
+  from `MAX_COMPLETION_TOKENS`.
+- Flock-level token streaming is disabled (`stream=False`). LiteLLM's
+  `StreamWrapper` broke in production under the hosting runtime's GenAI
+  tracing instrumentation, which the Foundry host still installs. The adapter
+  streams whole artifacts anyway, so per-token streaming buys nothing.
 
-The inference base URL is derived from the injected `FOUNDRY_PROJECT_ENDPOINT`
-and validated in `model_endpoint.py`. Both `AZURE_API_BASE` and
-`AZURE_API_VERSION` override the derived values; the API version must cover
-whichever model the project deploys.
+Each engine retries a failed model call three times (`max_retries=3`), and DSPy
+falls back to a second prompt adapter when a call fails, so a permanent 4xx such
+as a missing role costs several model calls per agent before the agent fails.
 
 ### Deploy
 
@@ -266,9 +320,11 @@ uv run deploy-agent incident-triage
 ```
 
 As with `architecture-advisor`, Foundry provisions the agent's managed identity
-only after the first hosted version exists. Grant that identity
-`Monitoring Metrics Publisher` on Application Insights and the `Foundry User`
-role on the Foundry **account**, then redeploy:
+only after the first hosted version exists. Inference through the project
+endpoint should work without a grant (see [Model Access](#model-access)), so
+the first deployment should not fail on model access. Record the identity as
+described above so Terraform provisions the retained grants, or grant them
+directly, matching `infra/rbac.tf`:
 
 ```bash
 APPI_ID="$(terraform -chdir=infra output -raw application_insights_id)"
@@ -290,9 +346,9 @@ az role assignment create \
   --scope "$ACCOUNT_ID"
 ```
 
-The account scope matters: this agent calls model inference directly rather than
-the Agents API, and a project-scope assignment does not inherit upward to the
-account. `infra/rbac.tf` provisions the same account-scope grant for
+`Monitoring Metrics Publisher` lets the container export telemetry. The
+account-scope `Foundry User` assignment inherits down to the project, so it
+covers both endpoints if project-endpoint inference turns out to need a role. `infra/rbac.tf` provisions the same grant for
 `operator_object_ids` so operators can run the agent locally.
 
 ### Resource Tier
@@ -303,17 +359,39 @@ i.e. mid-deployment. `HostedAgentSpec` validates the pair on construction so an
 invalid tier fails in `pytest` instead.
 
 Measured peak RSS for a full three-agent cascade is ~310 MiB, so the default
-`(1, 2Gi)` tier applies.
+`(1, 2Gi)` tier applies. Every concurrent workflow builds its own blackboard,
+so raise the tier before raising `MAX_ACTIVE_WORKFLOWS` far beyond the default.
 
-### Dependency Overrides
+### Dependencies
 
-`flock-core` pins `opentelemetry-api` and `opentelemetry-sdk` to `1.34.1`, while
-every release of `azure-ai-agentserver-core` requires `>=1.43`. Both use only
-stable OpenTelemetry 1.x APIs, so `src/agents/incident_triage/pyproject.toml`
-forces the newer runtime through `[tool.uv] override-dependencies` rather than
-forking either dependency. `googleapis-common-protos` is overridden for the same
-reason: `flock-core`'s deprecated Jaeger exporter caps it below what the OTLP
-exporter needs, and nothing here exports to Jaeger.
+`src/agents/incident_triage/pyproject.toml` depends on
+`flock-core[azure,foundry]`. The `foundry` extra brings
+`azure-ai-agentserver-responses` and `azure-ai-agentserver-core` (2.1.x), and
+`azure` brings `azure-identity`. `uv.lock` pins the exact versions. No
+dependency overrides are needed: `flock-core` 0.5.700 itself requires
+OpenTelemetry `>=1.43`.
+
+### Run Locally
+
+Export `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME` as in
+[Hosted Local Development](#hosted-local-development). Locally,
+`DefaultAzureCredential` falls back to your `az login` identity, which needs the
+operator grant described above. Then:
+
+```bash
+cd src/agents/incident_triage
+uv run python main.py
+
+# In a second shell:
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8088/readiness
+curl -s localhost:8088/responses \
+  -H 'content-type: application/json' \
+  -d '{"input":"Checkout returns HTTP 500 for 30% of requests since the 14:05 deploy."}' \
+  | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["output"]))'
+```
+
+Readiness should answer `200` and the request should return `3` output items.
+Add `"stream": true` to see each artifact arrive as its own output item.
 
 ## Deploy the Connected-Model Prompt Agent
 
@@ -402,14 +480,7 @@ export AZURE_AI_MODEL_DEPLOYMENT_NAME="$(
 uv run python main.py
 ```
 
-For `incident-triage`, one request should return three output items:
-
-```bash
-curl -s localhost:8088/responses \
-  -H 'content-type: application/json' \
-  -d '{"input":"Checkout returns HTTP 500 for 30% of requests since the 14:05 deploy."}' \
-  | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["output"]))'
-```
+For `incident-triage`, see [Run Locally](#run-locally) for the request to send.
 
 Each hosted project has its own `pyproject.toml`, `uv.lock`, `Dockerfile`, and
 `.dockerignore`, and selects a single root-level test file:

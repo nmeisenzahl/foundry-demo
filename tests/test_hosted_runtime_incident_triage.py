@@ -1,43 +1,124 @@
 import asyncio
 import json
+import os
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
+
+# The Foundry host owns OpenTelemetry; flock installs its own tracer at import
+# unless told not to, and importorskip below already imports it.
+os.environ.setdefault("FLOCK_AUTO_TRACE", "false")
 
 pytest.importorskip(
     "flock",
     reason="hosted runtime deps live in src/agents/incident_triage",
 )
 
+# Without an Application Insights connection string the host falls back to
+# console exporters, which write to pytest's closed capture streams at exit.
+# Set after the skip so the root test session is unaffected.
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+
 sys.path.insert(
     0,
     str(Path(__file__).resolve().parents[1] / "src" / "agents" / "incident_triage"),
 )
 
+import dspy  # noqa: E402
 import flock_app  # noqa: E402
 import main  # noqa: E402
-from flock.models.system_artifacts import WorkflowError  # noqa: E402
+from azure.ai.agentserver.responses import InMemoryResponseProvider  # noqa: E402
+from flock import FlockApplication, WorkflowContext  # noqa: E402
+from flock.components.agent import EngineComponent  # noqa: E402
+from flock.integrations.foundry import IdentityPolicy  # noqa: E402
 from flock.registry import type_registry  # noqa: E402
-from model_endpoint import (  # noqa: E402
-    DEFAULT_API_VERSION,
-    resolve_api_base,
-    resolve_api_version,
-    resolve_model_endpoint,
-)
+from flock.utils.runtime import EvalResult  # noqa: E402
+from starlette.testclient import TestClient  # noqa: E402
 
 PROJECT_ENDPOINT = "https://example.services.ai.azure.com/api/projects/dev"
+REPORT = "Checkout returns HTTP 500 for 30% of requests since the 14:05 deploy."
+
+CANNED: dict[str, Any] = {
+    "impact_assessor": flock_app.ImpactAssessment(
+        severity="High",
+        affected_scope="Checkout API and the mobile client",
+        user_impact="Roughly a third of purchases fail",
+    ),
+    "root_cause_analyst": flock_app.RootCauseHypothesis(
+        hypothesis=(
+            "The 14:05 deploy shipped a schema change the payment adapter cannot deserialize."
+        ),
+        evidence=["Errors start at 14:05"],
+        confidence=0.7,
+    ),
+    "incident_commander": flock_app.ActionPlan(
+        immediate_steps=["Roll back the 14:05 deploy"],
+        owner_role="Checkout on-call",
+        comms_update="Checkout is degraded; a rollback is in progress.",
+    ),
+}
+
+
+class OfflineEngine(EngineComponent):
+    """Deterministic stand-in for the model: one canned artifact per agent."""
+
+    fail_agent: str | None = None
+    # Any, not a dict annotation: pydantic would copy a dict and lose the record.
+    seen: Any = None
+
+    async def evaluate(self, agent, ctx, inputs, output_group) -> EvalResult:
+        if self.seen is not None:
+            self.seen[agent.name] = sorted(artifact.type for artifact in inputs.artifacts)
+        if agent.name == self.fail_agent:
+            raise RuntimeError("model deployment unavailable")
+        return EvalResult.from_object(CANNED[agent.name], agent=agent)
+
+
+def _offline(**engine_fields: Any) -> flock_app.EngineFactory:
+    return lambda context: OfflineEngine(**engine_fields)
+
+
+def _context(workflow_id: str = "wf-1", **attributes: str) -> WorkflowContext:
+    return WorkflowContext(workflow_id=workflow_id, attributes=attributes)
 
 
 def _build() -> "flock_app.Flock":
-    return flock_app.build_flock(
-        model_deployment="demo-chat-model",
-        api_base="https://example.services.ai.azure.com",
-        api_version=DEFAULT_API_VERSION,
-        token_provider=lambda: "token",
+    return flock_app.build_flock(_context(), engine_factory=_offline())
+
+
+def _run(application: FlockApplication, workflow_id: str = "wf-1"):
+    return asyncio.run(
+        application.run(
+            flock_app.IncidentReport(raw_report=REPORT),
+            context=_context(workflow_id),
+        )
     )
+
+
+def _offline_host(application: FlockApplication, **kwargs: Any):
+    kwargs.setdefault("identity", IdentityPolicy(local_development=True))
+    return main.build_host(
+        application,
+        observability="none",
+        store=InMemoryResponseProvider(),
+        **kwargs,
+    )
+
+
+def _message_texts(response: dict) -> list[str]:
+    return [
+        part["text"]
+        for item in response.get("output", [])
+        if item.get("type") == "message"
+        for part in item.get("content", [])
+        if part.get("type") == "output_text"
+    ]
+
+
+# -- crew topology ----------------------------------------------------------
 
 
 def test_build_flock_registers_the_triage_crew() -> None:
@@ -47,7 +128,8 @@ def test_build_flock_registers_the_triage_crew() -> None:
         "root_cause_analyst",
         "incident_commander",
     ]
-    assert flock.model == "demo-chat-model" or flock.model.endswith("demo-chat-model")
+    # FlockApplication refuses instances that would print result panels.
+    assert flock.no_output is True
 
 
 def test_parallel_agents_share_the_incident_report_subscription() -> None:
@@ -78,228 +160,286 @@ def test_commander_declares_an_and_gate_over_both_analyses() -> None:
     assert published == {type_registry.name_for(flock_app.ActionPlan)}
 
 
-def test_each_agent_gets_its_own_engine_carrying_the_token_provider() -> None:
-    flock = _build()
-    engines = [agent.engines[0] for agent in flock.agents]
+# -- model engines ----------------------------------------------------------
+
+
+def _model_flock(token_provider=lambda: "token"):
+    factory = flock_app.dspy_engine_factory(
+        model="azure/demo-chat-model",
+        api_base=PROJECT_ENDPOINT,
+        token_provider=token_provider,
+        max_completion_tokens=1234,
+    )
+    return flock_app.build_flock(
+        _context(**{"foundry.call_id": "call-1"}), engine_factory=factory
+    )
+
+
+def test_each_agent_gets_its_own_engine_on_the_project_endpoint() -> None:
+    def token_provider() -> str:
+        return "token"
+
+    engines = [agent.engines[0] for agent in _model_flock(token_provider).agents]
+
+    # Agent._resolve_engines mutates the engines it is handed.
     assert len({id(engine) for engine in engines}) == 3
     for engine in engines:
         assert engine.model == "azure/demo-chat-model"
-        assert engine.lm_kwargs["api_base"] == "https://example.services.ai.azure.com"
-        assert engine.lm_kwargs["api_version"] == DEFAULT_API_VERSION
-        assert engine.lm_kwargs["azure_ad_token_provider"]() == "token"
-        # Foundry chat models reject max_tokens, and LiteLLM cannot infer the
-        # model family behind a deployment name, so it has to be dropped.
-        assert engine.lm_kwargs["additional_drop_params"] == ["max_tokens"]
+        # LiteLLM's v1 path calls <project endpoint>/openai/v1.
+        assert engine.lm_kwargs["api_base"] == PROJECT_ENDPOINT
+        assert engine.lm_kwargs["api_version"] == "v1"
+        # One provider per process, not per agent or workflow.
+        assert engine.lm_kwargs["azure_ad_token_provider"] is token_provider
+        assert engine.lm_kwargs["extra_headers"] == {"x-agent-foundry-call-id": "call-1"}
+        assert engine.max_retries == 3
         # Whole artifacts are emitted, not tokens.
         assert engine.stream is False
         assert engine.no_output is True
+
+
+def test_engines_send_max_completion_tokens_and_never_max_tokens() -> None:
+    """Foundry chat models reject max_tokens.
+
+    LiteLLM cannot infer the model family behind an Azure deployment name, so
+    its own mapping never fires; the engine has to send the right parameter.
+    """
+    engine = _model_flock().agents[0].engines[0]
+
+    lm = engine._create_lm(dspy, engine.model, engine._build_lm_kwargs())
+
+    assert lm.kwargs["max_completion_tokens"] == 1234
+    assert "max_tokens" not in lm.kwargs
+    assert lm.num_retries == 3
+
+
+def test_model_engine_factory_reads_the_injected_environment(monkeypatch) -> None:
+    monkeypatch.setenv("FOUNDRY_PROJECT_ENDPOINT", PROJECT_ENDPOINT)
+    monkeypatch.setenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "demo-chat-model")
+    monkeypatch.delenv("MAX_COMPLETION_TOKENS", raising=False)
+    main.model_engine_factory.cache_clear()
+    try:
+        with patch.object(
+            main, "get_default_azure_token_provider", return_value=lambda: "token"
+        ) as provider:
+            first = main.model_engine_factory()(_context("wf-a"))
+            second = main.model_engine_factory()(_context("wf-b"))
+    finally:
+        main.model_engine_factory.cache_clear()
+
+    # Created once per process, for the Foundry audience.
+    provider.assert_called_once_with(scopes=("https://ai.azure.com/.default",))
+    assert first is not second
+    assert first.lm_kwargs["azure_ad_token_provider"] is second.lm_kwargs[
+        "azure_ad_token_provider"
+    ]
+    assert first.model == "azure/demo-chat-model"
+    assert first.lm_kwargs["api_base"] == PROJECT_ENDPOINT
+    assert first.max_completion_tokens == 4000
 
 
 def test_dspy_input_type_warning_is_disabled() -> None:
     # Flock passes DSPy the artifact payload as a dict while annotating the
     # signature with the model class, so the check warns on every invocation and
     # can never be meaningful here.
-    import dspy
-
     assert dspy.settings.warn_on_type_mismatch is False
 
 
-def test_resolve_model_endpoint_strips_the_project_path() -> None:
-    assert resolve_model_endpoint(PROJECT_ENDPOINT) == "https://example.services.ai.azure.com"
+# -- application contract ---------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("endpoint", "message"),
-    [
-        ("", "empty"),
-        ("http://example.services.ai.azure.com", "https"),
-        ("https:///api/projects/dev", "host"),
-        ("https://user:pw@example.services.ai.azure.com", "unsupported"),
-    ],
-)
-def test_resolve_model_endpoint_rejects_bad_input(endpoint: str, message: str) -> None:
-    with pytest.raises(ValueError, match=message):
-        resolve_model_endpoint(endpoint)
-
-
-def test_resolve_api_base_prefers_explicit_override() -> None:
-    env = {
-        "FOUNDRY_PROJECT_ENDPOINT": PROJECT_ENDPOINT,
-        "AZURE_API_BASE": "https://override.openai.azure.com/",
-    }
-    assert resolve_api_base(env) == "https://override.openai.azure.com"
-    assert resolve_api_base({"FOUNDRY_PROJECT_ENDPOINT": PROJECT_ENDPOINT}) == (
-        "https://example.services.ai.azure.com"
+def test_application_exposes_all_three_artifacts_and_requires_the_plan() -> None:
+    contract = main.application.contract
+    assert contract.input_type is flock_app.IncidentReport
+    assert contract.output_types == (
+        flock_app.ImpactAssessment,
+        flock_app.RootCauseHypothesis,
+        flock_app.ActionPlan,
     )
+    assert contract.required_output_types == (flock_app.ActionPlan,)
+    assert main.application.admission.limit == main.MAX_ACTIVE_WORKFLOWS
+    assert main.application.default_timeout == 300
 
 
-def test_resolve_api_version_defaults_and_overrides() -> None:
-    assert resolve_api_version({}) == DEFAULT_API_VERSION
-    assert resolve_api_version({"AZURE_API_VERSION": " 2030-01-01 "}) == "2030-01-01"
+def test_max_active_workflows_defaults_to_four_and_reads_the_environment() -> None:
+    assert main.max_active_workflows({}) == 4
+    assert main.max_active_workflows({"MAX_ACTIVE_WORKFLOWS": "9"}) == 9
+    assert main.build_application(max_active_workflows=2).admission.limit == 2
+
+
+def test_module_exposes_the_adapter_as_the_asgi_app() -> None:
+    assert main.app is main.host.app
+    assert main.host.application is main.application
 
 
 def test_format_artifact_labels_the_type() -> None:
-    rendered = main.format_artifact(
-        flock_app.ImpactAssessment(
-            severity="High",
-            affected_scope="Checkout API and the mobile client",
-            user_impact="Roughly a third of purchases fail",
-        )
-    )
+    rendered = main.format_artifact(CANNED["impact_assessor"])
     assert rendered.startswith("ImpactAssessment\n")
     assert '"severity": "High"' in rendered
 
 
-def test_require_one_rejects_an_incomplete_cascade() -> None:
-    with pytest.raises(main.TriageError, match="no agent reported an error"):
-        main._require_one([], artifact_type=flock_app.ActionPlan, errors=[])
+# -- offline end-to-end -------------------------------------------------------
 
 
-def test_require_one_reports_why_the_agents_dropped_out() -> None:
-    """A missing artifact is a symptom; the WorkflowError says what happened."""
-    errors = [
-        WorkflowError(
-            failed_agent="impact_assessor",
-            error_type="AuthenticationError",
-            error_message="Principal does not have access to API/Operation.",
-            timestamp=datetime(2026, 9, 12, 8, 45, tzinfo=UTC),
-        )
-    ]
+def test_offline_cascade_publishes_all_three_artifacts() -> None:
+    seen: dict[str, list[str]] = {}
+    application = main.build_application(engine_factory=_offline(seen=seen))
 
-    with pytest.raises(main.TriageError) as excinfo:
-        main._require_one([], artifact_type=flock_app.ImpactAssessment, errors=errors)
+    result = _run(application)
 
-    message = str(excinfo.value)
-    assert "impact_assessor" in message
-    assert "Principal does not have access to API/Operation." in message
-
-
-class _StubStore:
-    def __init__(self, artifacts: dict[type, list[object]]) -> None:
-        self._artifacts = artifacts
-        self.correlation_ids: list[str] = []
-
-    async def get_by_type(self, artifact_type, *, correlation_id=None):
-        self.correlation_ids.append(correlation_id)
-        return self._artifacts[artifact_type]
-
-
-class _StubFlock:
-    def __init__(self, store: _StubStore) -> None:
-        self.store = store
-        self.published: list[tuple[object, str]] = []
-        self.idle_calls = 0
-
-    async def publish(self, obj, *, correlation_id=None):
-        self.published.append((obj, correlation_id))
-
-    async def run_until_idle(self, *, timeout=None):
-        self.idle_calls += 1
-
-
-def _stub_flock() -> _StubFlock:
-    return _StubFlock(
-        _StubStore(
-            {
-                flock_app.ImpactAssessment: [
-                    flock_app.ImpactAssessment(
-                        severity="High",
-                        affected_scope="Checkout API and the mobile client",
-                        user_impact="Roughly a third of purchases fail",
-                    )
-                ],
-                flock_app.RootCauseHypothesis: [
-                    flock_app.RootCauseHypothesis(
-                        hypothesis=(
-                            "The 14:05 deploy shipped a schema change the payment "
-                            "adapter cannot deserialize."
-                        ),
-                        evidence=["Errors start at 14:05"],
-                        confidence=0.7,
-                    )
-                ],
-                flock_app.ActionPlan: [
-                    flock_app.ActionPlan(
-                        immediate_steps=["Roll back the 14:05 deploy"],
-                        owner_role="Checkout on-call",
-                        comms_update="Checkout is degraded; a rollback is in progress.",
-                    )
-                ],
-                WorkflowError: [],
-            }
-        )
+    assert result.status == "succeeded", result
+    assert len(result.outputs) == 3
+    values = [event.value for event in result.outputs]
+    assert {type(value) for value in values} == {
+        flock_app.ImpactAssessment,
+        flock_app.RootCauseHypothesis,
+        flock_app.ActionPlan,
+    }
+    # The join can only publish after both analyses.
+    assert isinstance(values[-1], flock_app.ActionPlan)
+    assert seen["incident_commander"] == sorted(
+        [
+            type_registry.name_for(flock_app.ImpactAssessment),
+            type_registry.name_for(flock_app.RootCauseHypothesis),
+        ]
     )
 
 
-def test_run_triage_publishes_and_collects_under_one_correlation_id() -> None:
-    stub = _stub_flock()
+def test_back_to_back_workflows_each_get_their_own_blackboard() -> None:
+    """One application serves many requests; nothing leaks between workflows.
+
+    The old runtime shared one blackboard and serialized turns; here every
+    workflow is built fresh, so the second run must see only its own artifacts.
+    """
+    built_for: list[str] = []
+
+    def engine_factory(context: WorkflowContext) -> EngineComponent:
+        built_for.append(context.workflow_id)
+        return OfflineEngine()
+
+    application = main.build_application(engine_factory=engine_factory)
 
     async def exercise():
-        with patch.object(main, "get_flock", return_value=stub):
-            return await main.run_triage("checkout is failing", correlation_id="resp-1")
+        report = flock_app.IncidentReport(raw_report=REPORT)
+        first = await application.run(report, context=_context("wf-1"))
+        second = await application.run(report, context=_context("wf-2"))
+        return first, second
 
-    artifacts = asyncio.run(exercise())
+    first, second = asyncio.run(exercise())
 
-    assert [type(artifact).__name__ for artifact in artifacts] == [
+    for result, workflow_id in ((first, "wf-1"), (second, "wf-2")):
+        assert result.status == "succeeded", result
+        assert len(result.outputs) == 3
+        assert {event.artifact.correlation_id for event in result.outputs} == {workflow_id}
+    # Three engines (one per agent) per workflow, after the contract probe.
+    assert built_for.count("wf-1") == 3
+    assert built_for.count("wf-2") == 3
+
+
+def test_a_failing_agent_fails_the_workflow_and_logs_the_cause(capfd) -> None:
+    """Callers get a safe failure code; operators find the cause in the log.
+
+    Without the analysis the AND gate never fires, so fewer than three items
+    exist and the smoke gate rejects the candidate.
+    """
+    application = main.build_application(
+        engine_factory=_offline(fail_agent="impact_assessor")
+    )
+
+    result = _run(application)
+
+    assert result.status == "failed"
+    assert result.failure.code == "agent_failed"
+    assert result.failure.agent == "impact_assessor"
+    assert "model deployment unavailable" not in result.failure.message
+    assert flock_app.ActionPlan not in {type(event.value) for event in result.outputs}
+    # Flock logs agent failures (with traceback) to stdout.
+    captured = capfd.readouterr()
+    assert "Agent 'impact_assessor' failed" in captured.out + captured.err
+    assert "model deployment unavailable" in captured.out + captured.err
+
+
+# -- HTTP (in-process ASGI) -----------------------------------------------------
+
+
+def test_http_readiness_and_one_message_item_per_artifact() -> None:
+    host = _offline_host(main.build_application(engine_factory=_offline()))
+
+    with TestClient(host.app) as client:
+        readiness = client.get("/readiness")
+        body = client.post("/responses", json={"input": REPORT}).json()
+
+    assert readiness.status_code == 200
+    assert body["status"] == "completed", body
+    texts = _message_texts(body)
+    assert len(texts) == 3
+    assert {text.split("\n", 1)[0] for text in texts} == {
         "ImpactAssessment",
         "RootCauseHypothesis",
         "ActionPlan",
+    }
+    assert texts[-1].startswith("ActionPlan\n")
+
+
+def test_http_stream_emits_one_message_item_per_artifact() -> None:
+    host = _offline_host(main.build_application(engine_factory=_offline()))
+
+    with TestClient(host.app) as client:
+        streamed = client.post("/responses", json={"input": REPORT, "stream": True}).text
+
+    events = [
+        json.loads(line[len("data: ") :])
+        for line in streamed.splitlines()
+        if line.startswith("data: ")
     ]
-    report, correlation_id = stub.published[0]
-    assert isinstance(report, flock_app.IncidentReport)
-    assert report.raw_report == "checkout is failing"
-    assert correlation_id == "resp-1"
-    assert stub.idle_calls == 1
-    assert stub.store.correlation_ids == ["resp-1"] * 4
+    done = [
+        event
+        for event in events
+        if event["type"] == "response.output_item.done" and event["item"]["type"] == "message"
+    ]
+    assert len(done) == 3
+    assert events[-1]["type"] == "response.completed"
 
 
-def test_handler_emits_one_output_item_per_artifact() -> None:
-    stub = _stub_flock()
+def test_http_agent_failure_is_a_safe_failure_code() -> None:
+    host = _offline_host(
+        main.build_application(engine_factory=_offline(fail_agent="root_cause_analyst"))
+    )
 
-    class _Context:
-        response_id = "resp-2"
+    with TestClient(host.app) as client:
+        body = client.post("/responses", json={"input": REPORT}).json()
 
-        async def get_input_text(self):
-            return "checkout is failing"
-
-    async def exercise():
-        with patch.object(main, "get_flock", return_value=stub):
-            return [
-                event
-                async for event in main.handler(None, _Context(), asyncio.Event())
-            ]
-
-    events = asyncio.run(exercise())
-    types = [event["type"] for event in events]
-    assert types[0] == "response.created"
-    assert types[-1] == "response.completed"
-    assert types.count("response.output_item.done") == 3
+    assert body["status"] == "failed"
+    assert body["error"]["code"] == "server_error"
+    assert body["error"]["message"].startswith("agent_failed:")
+    assert "model deployment unavailable" not in json.dumps(body)
 
 
-def test_handler_reports_a_failed_cascade_on_the_stream() -> None:
-    """Raising before response.created costs the caller the diagnosis.
+def test_http_default_identity_does_not_require_the_gateway_header(monkeypatch) -> None:
+    """Nothing is partitioned by principal, so a missing x-agent-user-id is fine.
 
-    The host has no response to fail at that point, so it answers a bare
-    HTTP 500 and the cause stays in the container log.
+    A strict policy would fail any caller whose request arrives without the
+    header, such as a service-principal smoke call, for no isolation benefit.
     """
+    monkeypatch.delenv("FLOCK_FOUNDRY_LOCAL_DEV", raising=False)
+    host = _offline_host(main.build_application(engine_factory=_offline()), identity=None)
 
-    class _Context:
-        response_id = "resp-3"
+    with TestClient(host.app) as client:
+        body = client.post("/responses", json={"input": REPORT}).json()
 
-        async def get_input_text(self):
-            return "checkout is failing"
+    assert body["status"] == "completed", body
+    assert len(_message_texts(body)) == 3
 
-    async def exercise():
-        with patch.object(main, "run_triage", side_effect=main.TriageError("blackboard stalled")):
-            return [
-                event
-                async for event in main.handler(None, _Context(), asyncio.Event())
-            ]
 
-    events = asyncio.run(exercise())
-    types = [event["type"] for event in events]
+def test_http_readiness_is_unavailable_without_the_model_deployment(monkeypatch) -> None:
+    """The contract probe builds the real engines, so missing config shows up here."""
+    monkeypatch.setenv("FOUNDRY_PROJECT_ENDPOINT", PROJECT_ENDPOINT)
+    monkeypatch.delenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", raising=False)
+    main.model_engine_factory.cache_clear()
+    try:
+        host = _offline_host(main.build_application())
+        with TestClient(host.app) as client:
+            readiness = client.get("/readiness")
+    finally:
+        main.model_engine_factory.cache_clear()
 
-    assert types[0] == "response.created"
-    assert types[-1] == "response.failed"
-    assert types.count("response.output_item.done") == 0
-    assert "blackboard stalled" in json.dumps(events[-1])
+    assert readiness.status_code == 503

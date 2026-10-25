@@ -19,8 +19,9 @@ INCIDENT_TRIAGE_SPEC = HostedAgentSpec(
     validate_smoke=validate_smoke,
     # The agent has no tools, so forcing a tool call would fail by construction.
     smoke_tool_choice=None,
-    # The hosted identity still needs 'Azure AI User' to reach model inference,
-    # and that role assignment takes time to propagate after the first deploy.
+    # Retries cover transport-level 401/403 from the Foundry endpoint while
+    # RBAC propagates. Model auth failures inside the container come back as a
+    # failed response (agent_failed) and are not retried.
     smoke_max_attempts=3,
     smoke_retry_seconds=10,
 )
