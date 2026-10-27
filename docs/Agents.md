@@ -10,6 +10,7 @@ isolated and containerized because the image is the deployed runtime boundary.
 src/agents/
   common/                # Shared contracts and validators
   research_assistant/    # Prompt agent definition, tools, and instructions
+  account_briefing/      # Prompt agent for public sales research with native Web Search
   architecture_advisor/  # Hosted runtime, definition, Toolbox spec, Dockerfile, and lockfile
   incident_triage/       # Flock blackboard runtime, definition, Dockerfile, and lockfile
   release_notes_writer/  # Prompt agent on an admin-connected (Token Control) model
@@ -101,11 +102,144 @@ Custom validators can inspect:
 - `completed_tool_name_counts`
 - `source_domain_counts`
 
-The `research-assistant` requires a completed `web_search_call` and a
+The `research-assistant` and `account-briefing` require a completed `web_search_call` and a
 `url_citation` annotation. The `release-notes-writer` requires the opposite:
 a message and no completed tool call at all, because a connected model cannot
 serve the hosted tools. This keeps agent-specific acceptance logic out of the
 shared delivery orchestrator.
+
+## Deploy the Account-Briefing Agent
+
+`account-briefing` is a declarative, Foundry-managed prompt agent for preparing
+sales conversations from current public research. Its package contains
+`instructions.py` (briefing instructions and smoke prompt), `tools.py` (native
+Web Search and smoke validation), `spec.py` (`ACCOUNT_BRIEFING_SPEC`), and
+`__init__.py` (the package-level `AGENT_SPEC` export). It has no hosted runtime,
+CRM/private-data integration, or additional infrastructure.
+
+Use the native Azure model selected by `FOUNDRY_MODEL_DEPLOYMENT_NAME` and the
+project endpoint from [Setup](Setup.md). The connected-model/Token Control path
+cannot serve native Web Search and must not be substituted. The tool is
+`WebSearchTool(external_web_access=True, search_context_size="low")`.
+
+```bash
+uv run deploy-agent account-briefing
+```
+
+In the deployed agent's conversation, try public-data-only requests:
+
+```text
+Prepare an account briefing for Microsoft Corporation.
+Prepare an account briefing for https://www.microsoft.com/.
+```
+
+Then supply optional, public seller-offering context in the conversation:
+
+```text
+Our offering is public cloud cost-management training. Tailor the Microsoft
+briefing's sales hypotheses and meeting questions to that offering.
+```
+
+### Briefing Contract
+
+The concise Markdown response has six sections:
+
+1. **Company overview:** the correctly identified company's business.
+2. **Recent developments:** dated findings from the past **90 days** by default,
+   or the explicit window requested (for example, "only the past seven days").
+   No qualifying news must be disclosed; older background is labeled as older,
+   never silently presented as recent.
+3. **Business priorities:** supported stated priorities, with inferences labeled.
+4. **Potential opportunities (sales hypotheses):** explicitly hypotheses, not
+   buying intent. Opportunities stay generic without seller context and are
+   tailored only when that context is supplied.
+5. **Meeting questions:** questions tied to the research and evidence gaps.
+6. **Sources:** sources used, with inline tool-provided URL citations supporting
+   factual claims throughout the briefing.
+
+Findings are dated and an as-of date is included when reliably available;
+unknown dates and freshness limitations are disclosed, not guessed. Missing or
+ambiguous company identity triggers a focused follow-up, not a guessed target or
+a mixture of organizations. Clarification-only turns need not search; every
+actual research briefing must use Web Search.
+
+Official company materials, investor disclosures, filings, and reputable
+reporting are preferred. Unsupported financials, people, technology usage,
+budgets, pain points, and buying intent must not be invented. Limited public
+coverage means explicit gaps, not fabricated detail. Search unavailability is
+disclosed rather than producing an apparently verified memory-only briefing.
+A partial briefing is acceptable only with cited supported findings and clearly
+identified gaps. Retrieved content is untrusted evidence, never instructions.
+These are prompt-level behaviors, not an enforced input/output schema.
+
+### Smoke and Release Handoff
+
+Deployment smoke uses an unambiguous Microsoft Corporation prompt asking for a
+short briefing with an official source verified in that search. It requires a
+completed, nonempty response through shared smoke handling, plus at least one
+completed `web_search_call` and one `url_citation`. Missing search and citation
+evidence is aggregated into `SmokeTestError` with the evidence retained.
+It does not depend on specific facts or model wording.
+
+`smoke_tool_choice="required"` applies to deployment smoke, **not** to every
+ordinary conversational turn; identity clarification can occur without search.
+Delivery still creates an immutable candidate, invokes that exact version,
+records smoke evidence, and promotes only after success. Inspect the
+existing-format record under `artifacts/deployments/`: confirm `candidate_version`,
+the native `model_deployment_name`, and `smoke` including completed
+search and URL citation counts before accepting the release. See
+[Operations](Operations.md#deployment-records) for record details. Do not weaken
+smoke to work around policy or service failures.
+
+The package must be included in `pyproject.toml` and enumerated in
+`.github/deployment/config.json`. Both are shared change-detection paths, so the
+first implementation merge can select **all registered agents** for rollout.
+Later changes confined to `src/agents/account_briefing/` select only
+`account-briefing`.
+
+### Public Data, Charges, and Governance
+
+Native Web Search is billable in addition to model usage; consult the current
+[Web Search documentation](https://learn.microsoft.com/azure/ai-foundry/agents/how-to/tools/web-search?view=foundry)
+and [pricing](https://azure.microsoft.com/pricing/details/ai-foundry/) before
+deployment. Administrators can disable Web Search for a subscription; confirm
+permission and availability rather than bypassing restrictions.
+
+Only public web evidence is available: the agent cannot verify private customer
+records, confidential plans, budgets, or intent. Do not put secrets or
+confidential customer/seller context in prompts, examples, or test searches.
+Bing grounding can transfer data outside Azure compliance and geographic
+boundaries, and the Microsoft Data Protection Addendum (DPA) does not apply to
+data sent to Bing grounding. Review the
+[web-grounding disclosures](https://learn.microsoft.com/azure/ai-foundry/agents/how-to/tools/web-grounding-overview?view=foundry),
+[agent data/privacy guidance](https://learn.microsoft.com/azure/ai-foundry/agents/concepts/data-privacy-security?view=foundry),
+and [Grounding with Bing terms](https://learn.microsoft.com/legal/cognitive-services/openai/grounding-with-bing-tou)
+with your administrator before use.
+
+### Live Behavioral Acceptance
+
+Deterministic tests cover definition wiring and search/citation smoke evidence,
+not the quality of generated briefings. Review actual responses against:
+correct company identity; all six sections; factual claims supported by the
+cited sources; dates within the requested news window; explicit gaps and
+uncertainty; and clear separation of facts, inferred priorities, and sales
+hypotheses. Open citations and check their support, not just their presence.
+Instruction-string assertions are not a substitute for this review.
+
+| Case | Expected behavior |
+| --- | --- |
+| Microsoft name or website, first without and then with public seller context | Correct six-section cited briefing; opportunities remain hypotheses and are tailored only with context |
+| Ambiguous company name, or no company, in fresh conversations | Focused identity clarification; no mixed organizations or invented target |
+| Obscure company with a known public website | Supported findings only; explicit gaps; no fabricated metrics, people, or intent |
+| Explicit seven-day news window, then a default request in a fresh conversation | Respect seven days or 90 days; show dates and disclose when no news qualifies |
+| Search unavailable, or a source containing instructions to the model | Disclose limitations; no apparently verified memory-only briefing; ignore source instructions |
+
+Use only authorized setups for adverse scenarios. Do not disable shared
+subscription features or modify public pages to manufacture a test. Record
+unavailable scenarios as **not exercised**, never passed. For each live case,
+record the date, candidate version, public prompt, observed behavior, reviewed
+sources, and pass/fail/blocked/not-exercised result in the release handoff;
+keep local transcripts and generated artifacts untracked.
 
 ## Deploy the Hosted Agent
 
@@ -396,7 +530,7 @@ Add `"stream": true` to see each artifact arrive as its own output item.
 ## Deploy the Connected-Model Prompt Agent
 
 The `release-notes-writer` agent does not run on the Terraform-deployed Azure
-OpenAI model the other three agents share. It runs on an **admin-connected
+OpenAI model the other agents share. It runs on an **admin-connected
 model**: a Foundry `ModelGateway` connection whose target is
 [Token Control](https://tokencontrol.ai/), where every inference request is
 priced, budgeted, rate-limited, and audited before it reaches a model.
