@@ -20,6 +20,17 @@
   },
   "agents": [
     {
+      "name": "account-briefing",
+      "kind": "prompt",
+      "image_context": "",
+      "image_repository": "",
+      "image_reference_env": "",
+      "image_digest_env": "",
+      "source_paths": [
+        "src/agents/account_briefing/"
+      ]
+    },
+    {
       "name": "architecture-advisor",
       "kind": "hosted",
       "image_context": "src/agents/architecture_advisor",

@@ -64,12 +64,15 @@ def test_select_agents_supports_all_single_and_comma_separated() -> None:
     assert tuple(agent.name for agent in select_agents(config, "research-assistant")) == (
         "research-assistant",
     )
+    assert tuple(agent.name for agent in select_agents(config, "account-briefing")) == (
+        "account-briefing",
+    )
     assert tuple(
         agent.name
         for agent in select_agents(
             config,
             "research-assistant, architecture-advisor, incident-triage, "
-            "release-notes-writer",
+            "release-notes-writer, account-briefing",
         )
     ) == tuple(list_agents())
 
@@ -162,6 +165,17 @@ def test_render_matrix_returns_compact_registry_sorted_json() -> None:
     assert list(payload) == ["include"]
     assert payload["include"] == [
         {
+            "agent_name": "account-briefing",
+            "agent_kind": "prompt",
+            "environment": "dev",
+            "github_environment": "dev",
+            "artifact_retention_days": 90,
+            "image_context": "",
+            "image_repository": "",
+            "image_reference_env": "",
+            "image_digest_env": "",
+        },
+        {
             "agent_name": "architecture-advisor",
             "agent_kind": "hosted",
             "environment": "dev",
@@ -230,14 +244,21 @@ def test_load_automation_config_exposes_change_detection_paths() -> None:
             )
 
 
-def test_select_changed_agents_selects_only_affected_agents() -> None:
+@pytest.mark.parametrize(
+    ("changed_path", "agent_name"),
+    [
+        ("src/agents/architecture_advisor/tools.py", "architecture-advisor"),
+        ("src/agents/account_briefing/instructions.py", "account-briefing"),
+    ],
+)
+def test_select_changed_agents_selects_only_affected_agents(
+    changed_path: str, agent_name: str
+) -> None:
     config = load_automation_config(_config_path())
 
-    selected = select_changed_agents(
-        config, ["src/agents/architecture_advisor/tools.py"]
-    )
+    selected = select_changed_agents(config, [changed_path])
 
-    assert tuple(agent.name for agent in selected) == ("architecture-advisor",)
+    assert tuple(agent.name for agent in selected) == (agent_name,)
 
 
 def test_select_changed_agents_returns_every_agent_for_shared_paths() -> None:

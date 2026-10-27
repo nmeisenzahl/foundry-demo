@@ -3,6 +3,7 @@ from importlib import import_module
 from pathlib import Path
 
 import pytest
+from azure.ai.projects.models import PromptAgentDefinition, WebSearchTool
 
 from foundry_demo.agents import (
     AGENTS,
@@ -15,6 +16,7 @@ from foundry_demo.agents import (
 from foundry_demo.agents.architecture_advisor import ARCHITECTURE_ADVISOR_SPEC
 from foundry_demo.agents.incident_triage import INCIDENT_TRIAGE_SPEC
 from foundry_demo.agents.research_assistant import RESEARCH_ASSISTANT_SPEC
+from foundry_demo.delivery.config import load_config
 from foundry_demo.delivery.prompt import build_definition
 from foundry_demo.delivery.smoke import SmokeEvidence, SmokeTestError
 
@@ -70,6 +72,98 @@ def test_research_assistant_smoke_validation() -> None:
     )
     with pytest.raises(SmokeTestError, match="No completed web_search_call"):
         RESEARCH_ASSISTANT_SPEC.validate_smoke(invalid_evidence)
+
+
+def test_account_briefing_native_definition() -> None:
+    from foundry_demo.agents.account_briefing import (
+        ACCOUNT_BRIEFING_INSTRUCTIONS,
+        ACCOUNT_BRIEFING_SMOKE_PROMPT,
+        ACCOUNT_BRIEFING_SPEC,
+        AGENT_SPEC,
+        build_tools,
+        validate_smoke,
+    )
+
+    spec = get_agent("account-briefing")
+    assert spec is AGENT_SPEC is ACCOUNT_BRIEFING_SPEC
+    assert spec.kind is AgentKind.PROMPT
+    assert spec.instructions == ACCOUNT_BRIEFING_INSTRUCTIONS
+    assert spec.smoke_prompt == ACCOUNT_BRIEFING_SMOKE_PROMPT
+    assert spec.tools_factory is build_tools
+    assert spec.validate_smoke is validate_smoke
+    assert spec.smoke_tool_choice == "required"
+    assert spec.connected_model_env_var is None
+    assert spec.model_deployment_name is None
+    config = load_config(
+        {
+            "FOUNDRY_PROJECT_ENDPOINT": "https://example.test/api/projects/demo",
+            "FOUNDRY_MODEL_DEPLOYMENT_NAME": "native-model",
+            "FOUNDRY_CONNECTED_MODEL_DEPLOYMENT_NAME": "gateway/connected-model",
+        }
+    )
+    definition = build_definition(spec, model=config.resolve_model_deployment_name(spec))
+    assert isinstance(definition, PromptAgentDefinition)
+    assert definition.model == "native-model"
+    assert definition.instructions == ACCOUNT_BRIEFING_INSTRUCTIONS
+    assert len(definition.tools) == 1
+    assert isinstance(definition.tools[0], WebSearchTool)
+    assert definition.tools[0].external_web_access is True
+    assert definition.tools[0].search_context_size == "low"
+    assert definition.temperature is None
+
+
+@pytest.mark.parametrize(
+    ("search_calls", "completed_search_calls", "citations", "expected_failures"),
+    [
+        pytest.param(1, 1, 1, (), id="grounded-success"),
+        pytest.param(
+            0, 0, 1, ("No completed web_search_call found in response output.",), id="no-search"
+        ),
+        pytest.param(
+            1,
+            0,
+            1,
+            ("No completed web_search_call found in response output.",),
+            id="incomplete-search",
+        ),
+        pytest.param(
+            1, 1, 0, ("No url_citation annotations found in response output.",), id="no-citation"
+        ),
+        pytest.param(
+            0,
+            0,
+            0,
+            (
+                "No completed web_search_call found in response output.",
+                "No url_citation annotations found in response output.",
+            ),
+            id="both-missing",
+        ),
+    ],
+)
+def test_account_briefing_smoke_validation(
+    search_calls: int,
+    completed_search_calls: int,
+    citations: int,
+    expected_failures: tuple[str, ...],
+) -> None:
+    evidence = SmokeEvidence(
+        response_id="resp-account-briefing",
+        response_status="completed",
+        output_text_present=True,
+        output_item_counts={"web_search_call": search_calls, "message": 1},
+        completed_output_item_counts={"web_search_call": completed_search_calls},
+        annotation_counts={"url_citation": citations},
+    )
+    validator = get_agent("account-briefing").validate_smoke
+    assert validator is not None
+    if not expected_failures:
+        validator(evidence)
+    else:
+        with pytest.raises(SmokeTestError) as exc_info:
+            validator(evidence)
+        assert str(exc_info.value) == "; ".join(expected_failures)
+        assert exc_info.value.evidence is evidence
 
 
 def test_build_definition_without_temperature() -> None:
