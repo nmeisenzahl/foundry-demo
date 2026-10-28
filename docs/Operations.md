@@ -141,6 +141,9 @@ For `research-assistant`, a passing response must also contain:
 - At least one completed `web_search_call`
 - At least one structured `url_citation`
 
+For `sales-account-briefing`, the same completed Web Search call is required,
+but the minimum is two structured `url_citation` annotations.
+
 This proves exact-version invocation, required tool execution, generated text,
 and citation plumbing. It does not evaluate factual correctness or overall
 answer quality.

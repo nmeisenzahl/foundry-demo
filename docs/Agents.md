@@ -10,6 +10,7 @@ isolated and containerized because the image is the deployed runtime boundary.
 src/agents/
   common/                # Shared contracts and validators
   research_assistant/    # Prompt agent definition, tools, and instructions
+  sales_account_briefing/ # Public-web sales briefing prompt, tools, and instructions
   architecture_advisor/  # Hosted runtime, definition, Toolbox spec, Dockerfile, and lockfile
   incident_triage/       # Flock blackboard runtime, definition, Dockerfile, and lockfile
   release_notes_writer/  # Prompt agent on an admin-connected (Token Control) model
@@ -84,6 +85,24 @@ On success, the command prints the agent name and local audit-record path:
 Successfully deployed research-assistant (record: .../artifacts/deployments/..._uuid.json)
 ```
 
+### Sales Account Briefing
+
+`sales-account-briefing` uses the default model deployment and public Web Search
+with a `medium` search context. Deploy it through the same prompt-agent pipeline:
+
+```bash
+uv run deploy-agent sales-account-briefing
+```
+
+In Foundry, provide a company name, optionally its domain and meeting context,
+for example: `Microsoft, microsoft.com. Intro call about cloud cost optimization.`
+The briefing includes Account Snapshot, Recent Developments (last 12 months),
+Strategic Priorities, Likely Challenges & Opportunities (labeled as inference),
+Key Public Stakeholders (executive names and roles only), Conversation Starters,
+Watch-outs, and Sources. Factual claims carry inline citations; unavailable
+sections say "No reliable public information found." No CRM or private-person
+data is used.
+
 ## Smoke Acceptance
 
 Every agent defines its smoke prompt and may provide custom evidence
@@ -102,7 +121,12 @@ Custom validators can inspect:
 - `source_domain_counts`
 
 The `research-assistant` requires a completed `web_search_call` and a
-`url_citation` annotation. The `release-notes-writer` requires the opposite:
+`url_citation` annotation. The `sales-account-briefing` requires at least one
+completed `web_search_call` and at least two `url_citation` annotations. Its smoke
+prompt requests only an Account Snapshot and two Recent Developments for
+Microsoft (`microsoft.com`) to keep the check short.
+
+The `release-notes-writer` requires the opposite:
 a message and no completed tool call at all, because a connected model cannot
 serve the hosted tools. This keeps agent-specific acceptance logic out of the
 shared delivery orchestrator.
