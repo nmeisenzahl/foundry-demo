@@ -32,6 +32,7 @@ packages = [
   "foundry_demo.agents",
   "foundry_demo.agents.common",
   "foundry_demo.agents.research_assistant",
+  "foundry_demo.agents.sales_account_briefing",
   "foundry_demo.agents.architecture_advisor",
   "foundry_demo.agents.incident_triage",
   "foundry_demo.agents.release_notes_writer",

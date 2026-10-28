@@ -3,6 +3,7 @@ from importlib import import_module
 from pathlib import Path
 
 import pytest
+from azure.ai.projects.models import WebSearchTool
 
 from foundry_demo.agents import (
     AGENTS,
@@ -15,6 +16,7 @@ from foundry_demo.agents import (
 from foundry_demo.agents.architecture_advisor import ARCHITECTURE_ADVISOR_SPEC
 from foundry_demo.agents.incident_triage import INCIDENT_TRIAGE_SPEC
 from foundry_demo.agents.research_assistant import RESEARCH_ASSISTANT_SPEC
+from foundry_demo.agents.sales_account_briefing import SALES_ACCOUNT_BRIEFING_SPEC
 from foundry_demo.delivery.prompt import build_definition
 from foundry_demo.delivery.smoke import SmokeEvidence, SmokeTestError
 
@@ -24,9 +26,11 @@ def test_list_and_get_agents() -> None:
     assert "research-assistant" in names
     assert "architecture-advisor" in names
     assert "incident-triage" in names
+    assert "sales-account-briefing" in names
     assert ARCHITECTURE_ADVISOR_SPEC.kind is AgentKind.HOSTED
     assert INCIDENT_TRIAGE_SPEC.kind is AgentKind.HOSTED
     assert RESEARCH_ASSISTANT_SPEC.kind is AgentKind.PROMPT
+    assert get_agent("sales-account-briefing") is SALES_ACCOUNT_BRIEFING_SPEC
 
     spec = get_agent("research-assistant")
     assert spec.name == "research-assistant"
@@ -70,6 +74,69 @@ def test_research_assistant_smoke_validation() -> None:
     )
     with pytest.raises(SmokeTestError, match="No completed web_search_call"):
         RESEARCH_ASSISTANT_SPEC.validate_smoke(invalid_evidence)
+
+
+def test_sales_account_briefing_spec_properties() -> None:
+    spec = SALES_ACCOUNT_BRIEFING_SPEC
+    assert spec.name == "sales-account-briefing"
+    assert spec.kind is AgentKind.PROMPT
+    assert spec.model_deployment_name is None
+    assert spec.smoke_tool_choice == "required"
+    assert "Microsoft" in spec.smoke_prompt
+    assert "microsoft.com" in spec.smoke_prompt
+    assert "Account Snapshot" in spec.smoke_prompt
+    assert "Recent Developments" in spec.smoke_prompt
+    tools = spec.tools_factory()
+    assert len(tools) == 1
+    assert isinstance(tools[0], WebSearchTool)
+    assert tools[0].external_web_access is True
+    assert tools[0].search_context_size == "medium"
+
+
+@pytest.mark.parametrize(("tool_count", "citation_count"), [(1, 2), (2, 3)])
+def test_sales_account_briefing_smoke_validation(
+    tool_count: int, citation_count: int
+) -> None:
+    evidence = SmokeEvidence(
+        response_id="resp-briefing",
+        response_status="completed",
+        output_text_present=True,
+        output_item_counts={"web_search_call": tool_count, "message": 1},
+        completed_output_item_counts={"web_search_call": tool_count},
+        annotation_counts={"url_citation": citation_count},
+    )
+    assert SALES_ACCOUNT_BRIEFING_SPEC.validate_smoke is not None
+    SALES_ACCOUNT_BRIEFING_SPEC.validate_smoke(evidence)
+
+
+@pytest.mark.parametrize(
+    ("completed_tools", "annotations", "expected_match"),
+    [
+        ({}, {}, "No completed web_search_call.*No url_citation"),
+        ({}, {"url_citation": 2}, "No completed web_search_call"),
+        ({"web_search_call": 0}, {"url_citation": 2}, "No completed web_search_call"),
+        ({"web_search_call": 1}, {}, "No url_citation"),
+        ({"web_search_call": 1}, {"url_citation": 0}, "No url_citation"),
+        ({"web_search_call": 1}, {"url_citation": 1}, "No url_citation"),
+    ],
+)
+def test_sales_account_briefing_smoke_rejects_insufficient_evidence(
+    completed_tools: dict[str, int],
+    annotations: dict[str, int],
+    expected_match: str,
+) -> None:
+    evidence = SmokeEvidence(
+        response_id="resp-briefing",
+        response_status="completed",
+        output_text_present=True,
+        output_item_counts={"web_search_call": 1, "message": 1},
+        completed_output_item_counts=completed_tools,
+        annotation_counts=annotations,
+    )
+    assert SALES_ACCOUNT_BRIEFING_SPEC.validate_smoke is not None
+    with pytest.raises(SmokeTestError, match=expected_match) as exc_info:
+        SALES_ACCOUNT_BRIEFING_SPEC.validate_smoke(evidence)
+    assert exc_info.value.evidence is evidence
 
 
 def test_build_definition_without_temperature() -> None:
