@@ -696,6 +696,7 @@ def test_main_list_agents(capsys: pytest.CaptureFixture) -> None:
     assert "Available agents:" in captured.out
     assert "architecture-advisor" in captured.out
     assert "research-assistant" in captured.out
+    assert "sales-account-briefing" in captured.out
 
 
 def test_main_unknown_agent_writes_failed_record(
