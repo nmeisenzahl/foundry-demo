@@ -25,7 +25,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework-foundry"
-version = "1.13.0"
+version = "1.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -35,9 +35,9 @@ dependencies = [
     { name = "azure-ai-projects" },
     { name = "httpx" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/87/77/3705a14f739ae0e946e471a003977f8d8d887e1a87f1b97277a7818a2b7a/agent_framework_foundry-1.13.0.tar.gz", hash = "sha256:77d7091533ac636e49b02077b20f5fd63eb2840aad79c62d40e1a685a00a4cde", size = 53028, upload-time = "2026-09-10T09:29:23.096Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f6/2a/93330dbace17eeb3f9be167884fc8fda246c2b92ba8df9ad29d733538d29/agent_framework_foundry-1.15.0.tar.gz", hash = "sha256:cd052b21089e779ca5540c4d2d69e7a4b1b561baf71a096cf5dc0febfa767989", size = 61140, upload-time = "2026-10-15T09:59:35.669Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e1/00/95ad6251ee1745cd3d091817d639224a7cdfcc432ff31129358f02ccfe29/agent_framework_foundry-1.13.0-py3-none-any.whl", hash = "sha256:6204adb6d075a7f8be202eb6a476d5207f954df57e06e038b2243c4154b8353f", size = 55494, upload-time = "2026-09-10T09:28:59.025Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/b6/7e84c5dcb8f477fe34a0f7157501bb360c0316ce999f0f8d14e5288296ca/agent_framework_foundry-1.15.0-py3-none-any.whl", hash = "sha256:1f4bc0c207386a7c6763b78a890dcad426e06e919cb4551e2970b8949bb8ba67", size = 62152, upload-time = "2026-10-15T09:55:21.351Z" },
 ]
 
 [[package]]
@@ -59,15 +59,15 @@ wheels = [
 
 [[package]]
 name = "agent-framework-openai"
-version = "1.14.2"
+version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "agent-framework-core" },
     { name = "openai" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/89/b2/c784f2c11b03f586a61775b1c5f61710379a1069257698dd803e7fbb03fa/agent_framework_openai-1.14.2.tar.gz", hash = "sha256:a09684d35bc0202b8fffea6fbd187480bc56a95027ed352d699a839d536a12ff", size = 63266, upload-time = "2026-09-03T09:53:52.239Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/53/fb87384f37bbf0a3e4d16a84ae0b8ee0028bb9c3b874573687364937b5bd/agent_framework_openai-1.17.0.tar.gz", hash = "sha256:5b48c67ca4142aa49790028ca9a745f4eb6886ad9f4a3caaf5368a866cf44939", size = 76839, upload-time = "2026-10-15T09:59:47.114Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/43/de/6bdf51e5671b9f72ba83cc8b9ae3bc616c23bdb7f30365756c7d8baa0e74/agent_framework_openai-1.14.2-py3-none-any.whl", hash = "sha256:3da7d1f81bcd2bdbae8ba833647a4a8c2da1f1250bd3cc7947b2eb4e67e10c61", size = 68397, upload-time = "2026-09-03T09:53:41.964Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/a9/2eec96b0030574ca2f74f69f3b72b908c7c0f55a0c63a96cabcd4f7ee2d2/agent_framework_openai-1.17.0-py3-none-any.whl", hash = "sha256:3a30fae2afd7fa0ee5b3247046e4ed462437983a7e567786e5ac6702e6b47b5f", size = 81664, upload-time = "2026-10-15T09:59:10.235Z" },
 ]
 
 [[package]]
@@ -483,7 +483,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", specifier = "==1.22.0" },
-    { name = "agent-framework-foundry", specifier = "==1.13.0" },
+    { name = "agent-framework-foundry", specifier = "==1.15.0" },
     { name = "agent-framework-foundry-hosting", specifier = "==1.0.0b260910" },
     { name = "azure-ai-agentserver-core", specifier = "==2.2.0" },
     { name = "azure-identity", specifier = "==1.26.0" },
