@@ -3,7 +3,7 @@ name = "foundry-demo-incident-triage"
 version = "0.1.0"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "flock-core[azure,foundry]==0.5.700",
+    "flock-core[azure,foundry]==0.5.800",
     "azure-identity==1.26.0",
 ]
 
